@@ -6,8 +6,10 @@ from dotenv import load_dotenv
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def generate_script(tour_name: str, price: str, highlights: str, description: str) -> str:
-    """Dùng GPT-4o-mini tạo script video ngắn tiếng Việt."""
+
+def generate_script(
+    tour_name: str, price: str, highlights: str, description: str, max_words: int = 130
+) -> str:
 
     prompt = f"""Bạn là chuyên gia marketing du lịch. Hãy viết script cho video Shorts/Reels 45 giây.
 
@@ -26,13 +28,13 @@ QUY TẮC:
 - Viết thuần tiếng Việt, giọng tự nhiên như đang nói chuyện
 - Không dùng ký tự đặc biệt, emoji trong script
 - Mỗi câu ngắn, dễ đọc to
-- Tổng khoảng 120-150 từ
+- Tổng KHÔNG QUÁ {max_words} từ. Đếm kỹ trước khi trả lời.
 - Kết thúc bằng: "Liên hệ ngay hôm nay để nhận ưu đãi đặc biệt!"
 
 CHỈ trả về nội dung script, không có tiêu đề hay giải thích."""
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",   # Rẻ nhất, đủ dùng cho task này (~$0.001/script)
+        model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.8,
         max_tokens=500,
