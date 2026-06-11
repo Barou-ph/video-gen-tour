@@ -1,69 +1,201 @@
-import whisper
 import subprocess
 import os
 
 
-def generate_subtitles(audio_path: str, srt_path: str) -> str:
-    """Dùng Whisper nhận dạng audio → tạo file .srt."""
+def generate_subtitles(audio_path: str, srt_path: str, script: str = None) -> str:
+    """
+    Tạo SRT từ script text — chia đều theo thời lượng audio.
+    Chính xác 100% vì dùng script gốc, không qua Whisper.
+    """
+    # Lấy thời lượng audio
+    probe = subprocess.run([
+        "ffprobe", "-v", "quiet",
+        "-show_entries", "format=duration",
+        "-of", "csv=p=0", audio_path
+    ], capture_output=True, text=True)
+    total_duration = float(probe.stdout.strip())
 
-    # Load model nhỏ nhất để chạy nhanh (base hoặc small)
-    model = whisper.load_model("base")
+    # Tách script thành các câu ngắn
+    sentences = _split_sentences(script)
+    print(f"[SUB] {len(sentences)} câu / {total_duration:.1f}s")
 
-    result = model.transcribe(
-        audio_path,
-        language="vi",  # Chỉ định tiếng Việt để tăng độ chính xác
-        task="transcribe",
-    )
+    # Chia thời gian đều cho từng câu
+    dur_each = total_duration / len(sentences)
 
-    # Chuyển kết quả Whisper sang định dạng SRT
     with open(srt_path, "w", encoding="utf-8") as f:
-        for i, segment in enumerate(result["segments"], start=1):
-            start = _seconds_to_srt_time(segment["start"])
-            end = _seconds_to_srt_time(segment["end"])
-            text = segment["text"].strip()
-            f.write(f"{i}\n{start} --> {end}\n{text}\n\n")
+        for i, sent in enumerate(sentences):
+            start = i * dur_each
+            end   = min((i + 1) * dur_each, total_duration)
+            f.write(f"{i+1}\n")
+            f.write(f"{_to_srt_time(start)} --> {_to_srt_time(end)}\n")
+            f.write(f"{sent}\n\n")
 
     return srt_path
 
 
-def _seconds_to_srt_time(seconds: float) -> str:
-    """Chuyển số giây thành định dạng HH:MM:SS,mmm của SRT."""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int((seconds - int(seconds)) * 1000)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+def _split_sentences(text: str) -> list:
+    """Tách text thành câu ngắn ~8-12 từ mỗi câu."""
+    import re
+
+    # Tách theo dấu câu trước
+    raw = re.split(r'(?<=[.!?])\s+', text.strip())
+
+    # Với câu dài hơn 12 từ, chia tiếp
+    result = []
+    for sent in raw:
+        words = sent.split()
+        if len(words) <= 12:
+            result.append(sent.strip())
+        else:
+            # Chia thành chunks ~8 từ
+            chunk_size = 8
+            for j in range(0, len(words), chunk_size):
+                chunk = " ".join(words[j:j+chunk_size])
+                if chunk.strip():
+                    result.append(chunk.strip())
+
+    return [s for s in result if s]
+
+
+def _to_srt_time(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds - int(seconds)) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _get_font(size: int):
+    from PIL import ImageFont
+    import requests
+
+    font_path = "assets/RobotoBold.ttf"
+    if not os.path.exists(font_path):
+        os.makedirs("assets", exist_ok=True)
+        print("[SUB] Tải font Roboto Bold...")
+        url = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Bold.ttf"
+        r = requests.get(url, timeout=15)
+        with open(font_path, "wb") as f:
+            f.write(r.content)
+
+    try:
+        return ImageFont.truetype(font_path, size)
+    except Exception:
+        for p in ["C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/arial.ttf"]:
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
 
 
 def burn_subtitles(video_path: str, srt_path: str, output_path: str) -> str:
-    """Burn subtitle vào video dùng moviepy — tránh lỗi FFmpeg path trên Windows."""
-    from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
-    import pysrt
+    """Burn subtitle vào video dùng Pillow + FFmpeg."""
+    import tempfile, shutil, json
+    from PIL import Image, ImageDraw
 
-    video = VideoFileClip(video_path)
-    subs = pysrt.open(srt_path, encoding="utf-8")
+    tmp_dir = tempfile.mkdtemp()
 
-    clips = [video]
-    for sub in subs:
-        start = sub.start.ordinal / 1000
-        end = sub.end.ordinal / 1000
-        txt = (
-            TextClip(
-                sub.text,
-                fontsize=45,
-                font="Arial",
-                color="white",
-                stroke_color="black",
-                stroke_width=2,
-                method="caption",
-                size=(video.w - 80, None),
-            )
-            .set_start(start)
-            .set_end(end)
-            .set_position(("center", 0.80), relative=True)
-        )
-        clips.append(txt)
+    try:
+        probe = subprocess.run([
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_streams", video_path
+        ], capture_output=True, text=True)
+        info   = json.loads(probe.stdout)
+        vs     = next(s for s in info["streams"] if s["codec_type"] == "video")
+        width  = int(vs["width"])
+        height = int(vs["height"])
+        num, den = map(int, vs["r_frame_rate"].split("/"))
+        fps    = num / den
 
-    final = CompositeVideoClip(clips)
-    final.write_videofile(output_path, codec="libx264", audio_codec="aac", logger=None)
+        import pysrt
+        subs = pysrt.open(srt_path, encoding="utf-8")
+
+        print(f"[SUB] Xuất frames ({width}x{height} @ {fps:.0f}fps)...")
+        frames_dir = os.path.join(tmp_dir, "frames")
+        os.makedirs(frames_dir)
+        subprocess.run([
+            "ffmpeg", "-y", "-i", video_path, "-q:v", "2",
+            os.path.join(frames_dir, "frame_%06d.jpg")
+        ], check=True, capture_output=True)
+
+        font        = _get_font(46)
+        frame_files = sorted(os.listdir(frames_dir))
+        print(f"[SUB] Vẽ subtitle lên {len(frame_files)} frames...")
+
+        for i, fname in enumerate(frame_files):
+            frame_time = i / fps
+            sub_text   = ""
+            for sub in subs:
+                if sub.start.ordinal / 1000 <= frame_time <= sub.end.ordinal / 1000:
+                    sub_text = sub.text.strip()
+                    break
+
+            if not sub_text:
+                continue
+
+            fpath = os.path.join(frames_dir, fname)
+            img   = Image.open(fpath).convert("RGB")
+            draw  = ImageDraw.Draw(img)
+
+            # Wrap text
+            max_w = int(width * 0.85)
+            words, lines, cur = sub_text.split(), [], ""
+            for word in words:
+                test = (cur + " " + word).strip()
+                bbox = draw.textbbox((0, 0), test, font=font)
+                if bbox[2] - bbox[0] > max_w and cur:
+                    lines.append(cur)
+                    cur = word
+                else:
+                    cur = test
+            if cur:
+                lines.append(cur)
+
+            line_h  = 54
+            total_h = len(lines) * line_h
+            y_cur   = int(height * 0.84) - total_h // 2
+
+            for line in lines:
+                bbox = draw.textbbox((0, 0), line, font=font)
+                tw   = bbox[2] - bbox[0]
+                th   = bbox[3] - bbox[1]
+                x    = (width - tw) // 2
+                pad  = 12
+
+                # Nền mờ sau chữ
+                overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                ov_draw = ImageDraw.Draw(overlay)
+                ov_draw.rectangle(
+                    [x-pad, y_cur-pad//2, x+tw+pad, y_cur+th+pad//2],
+                    fill=(0, 0, 0, 140)
+                )
+                img   = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+                draw  = ImageDraw.Draw(img)
+
+                # Viền đen + chữ trắng
+                for dx, dy in [(-2,0),(2,0),(0,-2),(0,2)]:
+                    draw.text((x+dx, y_cur+dy), line, font=font, fill=(0, 0, 0))
+                draw.text((x, y_cur), line, font=font, fill=(255, 255, 255))
+                y_cur += line_h
+
+            img.save(fpath, "JPEG", quality=95)
+
+        print("[SUB] Ghép frames thành video cuối...")
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-framerate", str(fps),
+            "-i", os.path.join(frames_dir, "frame_%06d.jpg"),
+            "-i", video_path,
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "libx264", "-preset", "fast",
+            "-c:a", "copy", "-pix_fmt", "yuv420p",
+            output_path
+        ], check=True, capture_output=True)
+
+        print(f"[SUB] Done → {output_path}")
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
     return output_path

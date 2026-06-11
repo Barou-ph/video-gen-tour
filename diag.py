@@ -1,32 +1,26 @@
-# diag.py
+# diag_fpt.py
+import requests, time
 from dotenv import load_dotenv
-
+import os
 load_dotenv()
 
-from modules.voice_gen import text_to_speech
-from modules.video_builder import _get_duration, build_video
-from PIL import Image
-import os
+FPT_API_KEY = os.getenv("FPT_API_KEY")
 
-# Tạo audio
-text = "Đây là câu test. Xem audio có bị cắt không. Một hai ba bốn năm sáu bảy tám chín mười. Liên hệ ngay hôm nay để nhận ưu đãi đặc biệt!"
-text_to_speech(text, "diag_audio.mp3")
-print(f"Audio duration: {_get_duration('diag_audio.mp3'):.1f}s")
-
-# Tạo 3 ảnh giả
-os.makedirs("diag_imgs", exist_ok=True)
-for i in range(3):
-    img = Image.new("RGB", (1080, 1920), color=(i * 80, 100, 150))
-    img.save(f"diag_imgs/img_{i}.jpg")
-
-# Chạy build_video
-print("\nChạy build_video...")
-build_video(
-    media_paths=[f"diag_imgs/img_{i}.jpg" for i in range(3)],
-    audio_path="diag_audio.mp3",
-    output_path="diag_output.mp4",
+resp = requests.post(
+    "https://api.fpt.ai/hmi/tts/v5",
+    headers={"api-key": FPT_API_KEY, "voice": "linhsan", "speed": ""},
+    data="Xin chào đây là test.".encode("utf-8")
 )
+data = resp.json()
+print("Response:", data)
 
-print(f"\nVideo duration: {_get_duration('diag_output.mp4'):.1f}s")
-print(f"Audio duration: {_get_duration('diag_audio.mp3'):.1f}s")
-print("=> Nếu 2 số này khớp nhau là OK")
+url = data["async"]
+print(f"\nThử download {url}")
+
+for i in range(10):
+    time.sleep(3)
+    r = requests.get(url)
+    print(f"Lần {i+1}: status={r.status_code}, size={len(r.content)}B, type={r.headers.get('Content-Type')}")
+    if len(r.content) > 2000:
+        print("=> Thành công!")
+        break

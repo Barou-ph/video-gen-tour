@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from modules.voice_gen import text_to_speech, clean_script
 from modules.script_gen import generate_script
 from modules.video_builder import build_video
-from modules.subtitle_gen import generate_subtitles
+from modules.subtitle_gen import generate_subtitles, burn_subtitles
 from modules.utils import ensure_dirs, make_temp_dir, clean_temp
 
 load_dotenv()
@@ -24,12 +24,10 @@ def slugify(text: str) -> str:
     return text[:40]
 
 
-# ─── Cấu hình trang ───────────────────────────────────────────────────────────
 st.set_page_config(page_title="Tour Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 Tour Video Generator")
 st.caption("Tự động tạo video Shorts/Reels quảng bá tour du lịch")
 
-# ─── Form ─────────────────────────────────────────────────────────────────────
 with st.form("tour_form"):
     st.subheader("Thông tin tour")
 
@@ -50,12 +48,12 @@ with st.form("tour_form"):
         height=100,
     )
 
-    st.subheader("Ảnh tour")
+    st.subheader("Ảnh / Video tour")
     uploaded_files = st.file_uploader(
-        "Upload ảnh (JPG, PNG) *",
-        type=["jpg", "jpeg", "png", "webp"],
+        "Upload ảnh hoặc video *",
+        type=["jpg", "jpeg", "png", "webp", "mp4", "mov", "avi"],
         accept_multiple_files=True,
-        help="Nên upload 8-15 ảnh đẹp. Tự động crop về 9:16.",
+        help="Upload 5-15 ảnh JPG/PNG hoặc video clip MP4. Tự động crop về 9:16.",
     )
 
     with st.expander("⚙️ Tuỳ chỉnh nâng cao"):
@@ -69,10 +67,7 @@ with st.form("tour_form"):
         with col4:
             max_words = st.slider(
                 "Giới hạn số từ script",
-                min_value=80,
-                max_value=200,
-                value=130,
-                step=10,
+                min_value=80, max_value=200, value=130, step=10,
                 help="Ít từ hơn = video ngắn hơn, nhịp nhanh hơn",
             )
 
@@ -82,14 +77,13 @@ with st.form("tour_form"):
             help="Nhạc nền tự động giảm xuống 15% volume",
         )
         add_subtitle = st.checkbox(
-            "Tạo file subtitle .srt tự động (Whisper)", value=True
+            "Burn subtitle vào video (Whisper, chậm hơn ~1 phút)", value=True
         )
 
     submitted = st.form_submit_button(
         "🚀 Tạo Video", use_container_width=True, type="primary"
     )
 
-# ─── Xử lý ────────────────────────────────────────────────────────────────────
 if submitted:
     if not tour_name or not price or not highlights:
         st.error("Vui lòng điền đầy đủ Tên tour, Giá và Điểm nổi bật!")
@@ -124,18 +118,16 @@ if submitted:
             with open(bg_music_path, "wb") as f:
                 f.write(bg_music.read())
 
-        # Bước 2: Tạo script
+        # Bước 2: Script
         with status:
             st.write("✍️ AI đang viết script...")
         progress.progress(20)
 
-        script = generate_script(
-            tour_name, price, highlights, description, max_words=max_words
-        )
+        script = generate_script(tour_name, price, highlights, description, max_words=max_words)
         script = clean_script(script)
 
         if not script or len(script) < 10:
-            st.error("Script rỗng sau khi làm sạch. Thử lại!")
+            st.error("Script rỗng. Thử lại!")
             st.stop()
 
         with status:
@@ -153,8 +145,8 @@ if submitted:
 
         # Bước 4: Ghép video
         with status:
-            st.write("🎬 FFmpeg đang ghép ảnh + audio + chuyển cảnh...")
-        progress.progress(60)
+            st.write("🎬 FFmpeg đang ghép ảnh + audio...")
+        progress.progress(55)
 
         logo_path = "assets/logo.png" if os.path.exists("assets/logo.png") else None
         draft_video = os.path.join(temp_dir, "draft.mp4")
@@ -167,29 +159,34 @@ if submitted:
             bg_music_path=bg_music_path,
         )
 
-        # Bước 5: Subtitle
-        final_video = os.path.join(
-            "output", f"{slugify(tour_name)}_{int(time.time())}.mp4"
-        )
+        # Bước 5: Subtitle + xuất file cuối
+        final_video = os.path.join("output", f"{slugify(tour_name)}_{int(time.time())}.mp4")
         srt_final = None
 
         if add_subtitle:
             with status:
-                st.write("📝 Whisper đang tạo subtitle...")
-            progress.progress(80)
+                st.write("📝 Whisper đang nhận dạng giọng nói...")
+            progress.progress(70)
 
             srt_path = os.path.join(temp_dir, "subtitle.srt")
-            generate_subtitles(audio_path, srt_path)
+            generate_subtitles(audio_path, srt_path, script=script)
 
+            with status:
+                st.write("🔥 Đang burn subtitle vào video...")
+            progress.progress(85)
+
+            burn_subtitles(draft_video, srt_path, final_video)
+
+            # Lưu SRT kèm để upload TikTok nếu muốn
             srt_final = final_video.replace(".mp4", ".srt")
             shutil.copy(srt_path, srt_final)
-
-        shutil.copy(draft_video, final_video)
+        else:
+            shutil.copy(draft_video, final_video)
 
         progress.progress(100)
         status.update(label="✅ Hoàn thành!", state="complete")
 
-        # ── Kết quả ───────────────────────────────────────────────────────────
+        # Kết quả
         st.success("🎉 Video tạo thành công!")
         st.video(final_video)
 

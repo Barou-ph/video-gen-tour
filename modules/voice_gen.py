@@ -18,39 +18,79 @@ def clean_script(text: str) -> str:
     return text
 
 
-def text_to_speech(
-    script: str, output_path: str, rate: str = "+0%", volume: str = "+0%"
-) -> str:
+def text_to_speech(script: str, output_path: str, rate: str = "+0%", volume: str = "+0%") -> str:
     script = clean_script(script)
     print(f"[TTS] FPT AI — {len(script)} ký tự | voice={VOICE}")
 
-    # Bước 1: Gửi script, nhận link async
+    # Nếu script > 500 ký tự thì chia đôi và ghép lại
+    if len(script) > 500:
+        mid = script.rfind('. ', 0, len(script)//2) + 2
+        part1 = script[:mid].strip()
+        part2 = script[mid:].strip()
+
+        path1 = output_path.replace(".mp3", "_p1.mp3")
+        path2 = output_path.replace(".mp3", "_p2.mp3")
+
+        _fpt_request(part1, path1)
+        _fpt_request(part2, path2)
+        _concat_audio(path1, path2, output_path)
+    else:
+        _fpt_request(script, output_path)
+
+    return output_path
+
+
+def _fpt_request(text: str, output_path: str):
+    """Gửi 1 đoạn text lên FPT và download audio về."""
     response = requests.post(
         "https://api.fpt.ai/hmi/tts/v5",
         headers={"api-key": FPT_API_KEY, "voice": VOICE, "speed": ""},
-        data=script.encode("utf-8"),
+        data=text.encode("utf-8"),
+        timeout=30
     )
-
     data = response.json()
     if data.get("error") != 0:
         raise RuntimeError(f"FPT TTS lỗi: {data}")
 
     audio_url = data["async"]
-    print(f"[TTS] Link audio: {audio_url}")
+    print(f"[TTS] Link: {audio_url}")
 
-    # Bước 2: Chờ FPT xử lý rồi download (thường 2-5 giây)
-    for attempt in range(10):
-        time.sleep(3)
-        audio_resp = requests.get(audio_url)
-        if audio_resp.status_code == 200 and len(audio_resp.content) > 1000:
-            break
-        print(f"[TTS] Chờ FPT xử lý... lần {attempt+1}")
-    else:
-        raise RuntimeError("FPT TTS timeout sau 30s.")
+    for attempt in range(20):
+        time.sleep(2)
+        try:
+            r = requests.get(audio_url, timeout=15)
+            if r.status_code == 200 and len(r.content) > 1000:
+                with open(output_path, "wb") as f:
+                    f.write(r.content)
+                print(f"[TTS] OK lần {attempt+1} — {len(r.content)//1024}KB")
+                return
+            print(f"[TTS] Chờ... lần {attempt+1} (size={len(r.content)}B)")
+        except Exception as e:
+            print(f"[TTS] Lỗi lần {attempt+1}: {e}")
 
-    with open(output_path, "wb") as f:
-        f.write(audio_resp.content)
+    raise RuntimeError("FPT TTS timeout sau 40s.")
 
-    size_kb = os.path.getsize(output_path) / 1024
-    print(f"[TTS] OK — {size_kb:.0f}KB → {output_path}")
-    return output_path
+
+def _concat_audio(path1: str, path2: str, output: str):
+    """Ghép 2 file audio bằng FFmpeg — fix Windows path."""
+    import subprocess, tempfile
+
+    # Chuyển sang forward slash
+    p1 = os.path.abspath(path1).replace("\\", "/")
+    p2 = os.path.abspath(path2).replace("\\", "/")
+
+    list_file = os.path.join(tempfile.gettempdir(), "audio_list.txt")
+    with open(list_file, "w", encoding="utf-8") as f:
+        f.write(f"file '{p1}'\n")
+        f.write(f"file '{p2}'\n")
+
+    result = subprocess.run([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "-i", list_file, "-c", "copy", output
+    ], capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"[AUDIO] FFmpeg stderr: {result.stderr[-300:]}")
+        raise RuntimeError(f"Ghép audio thất bại: {result.stderr[-200:]}")
+
+    print(f"[TTS] Ghép audio xong → {output}")
