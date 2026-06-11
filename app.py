@@ -7,7 +7,7 @@ import re
 from dotenv import load_dotenv
 
 from modules.voice_gen import text_to_speech, clean_script
-from modules.script_gen import generate_script
+from modules.script_gen import generate_script, parse_tour_info
 from modules.video_builder import build_video
 from modules.subtitle_gen import generate_subtitles, burn_subtitles
 from modules.utils import ensure_dirs, make_temp_dir, clean_temp
@@ -29,31 +29,26 @@ st.title("🎬 Tour Video Generator")
 st.caption("Tự động tạo video Shorts/Reels quảng bá tour du lịch")
 
 with st.form("tour_form"):
-    st.subheader("Thông tin tour")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        tour_name = st.text_input("Tên tour *", placeholder="Tour Đà Lạt 3N2Đ")
-    with col2:
-        price = st.text_input("Giá tour *", placeholder="2.990.000đ/người")
+    st.subheader("📋 Thông tin tour")
+    tour_raw = st.text_area(
+        "Dán thông tin tour vào đây *",
+        placeholder="""Ví dụ — dán thoải mái, AI tự lọc:
 
-    highlights = st.text_area(
-        "Điểm nổi bật *",
-        placeholder="Thác Datanla, Đồi Chè Cầu Đất, Làng Cù Lần, ...",
-        height=80,
-    )
-    description = st.text_area(
-        "Mô tả ngắn",
-        placeholder="Tour khởi hành mỗi thứ 6, bao gồm xe, khách sạn 3 sao, ăn sáng...",
-        height=100,
+Tour Đà Lạt 3N2Đ
+Giá: 2.990.000đ/người
+Khởi hành: Thứ 6 hàng tuần
+Điểm nổi bật: Thác Datanla, Đồi Chè Cầu Đất, Làng Cù Lần, Chợ Đêm
+Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
+        height=200,
     )
 
-    st.subheader("Ảnh / Video tour")
+    st.subheader("🎬 Ảnh / Video tour")
     uploaded_files = st.file_uploader(
         "Upload ảnh hoặc video *",
-        type=["jpg", "jpeg", "png", "webp", "mp4", "mov", "avi"],
+        type=["jpg", "jpeg", "png", "webp", "mp4", "mov"],
         accept_multiple_files=True,
-        help="Upload 5-15 ảnh JPG/PNG hoặc video clip MP4. Tự động crop về 9:16.",
+        help="Upload 5-15 file. Ảnh JPG/PNG hoặc video MP4/MOV đều được.",
     )
 
     with st.expander("⚙️ Tuỳ chỉnh nâng cao"):
@@ -66,31 +61,26 @@ with st.form("tour_form"):
             )
         with col4:
             max_words = st.slider(
-                "Giới hạn số từ script",
+                "Độ dài script (số từ)",
                 min_value=80, max_value=200, value=130, step=10,
-                help="Ít từ hơn = video ngắn hơn, nhịp nhanh hơn",
             )
-
         bg_music = st.file_uploader(
             "🎵 Nhạc nền (MP3, tuỳ chọn)",
             type=["mp3"],
-            help="Nhạc nền tự động giảm xuống 15% volume",
+            help="Tự động giảm xuống 15% volume",
         )
-        add_subtitle = st.checkbox(
-            "Burn subtitle vào video (Whisper, chậm hơn ~1 phút)", value=True
-        )
+        add_subtitle = st.checkbox("Burn subtitle vào video", value=True)
 
     submitted = st.form_submit_button(
         "🚀 Tạo Video", use_container_width=True, type="primary"
     )
 
 if submitted:
-    if not tour_name or not price or not highlights:
-        st.error("Vui lòng điền đầy đủ Tên tour, Giá và Điểm nổi bật!")
+    if not tour_raw or len(tour_raw.strip()) < 10:
+        st.error("Vui lòng nhập thông tin tour!")
         st.stop()
-
     if not uploaded_files:
-        st.error("Vui lòng upload ít nhất 1 ảnh!")
+        st.error("Vui lòng upload ít nhất 1 ảnh hoặc video!")
         st.stop()
 
     temp_dir = make_temp_dir()
@@ -99,31 +89,30 @@ if submitted:
         progress = st.progress(0)
         status = st.status("Đang khởi động...", expanded=True)
 
-        # Bước 1: Lưu ảnh
+        # Bước 1: Lưu media
         with status:
-            st.write("📁 Đang lưu ảnh...")
+            st.write("📁 Đang lưu media...")
         progress.progress(10)
 
-        image_paths = []
+        media_paths = []
         for f in uploaded_files:
             path = os.path.join(temp_dir, f.name)
             with open(path, "wb") as fp:
                 fp.write(f.read())
-            image_paths.append(path)
+            media_paths.append(path)
 
-        # Lưu nhạc nền nếu có
         bg_music_path = None
         if bg_music:
             bg_music_path = os.path.join(temp_dir, "bg_music.mp3")
             with open(bg_music_path, "wb") as f:
                 f.write(bg_music.read())
 
-        # Bước 2: Script
+        # Bước 2: AI parse + viết script
         with status:
-            st.write("✍️ AI đang viết script...")
+            st.write("✍️ AI đang đọc thông tin và viết script...")
         progress.progress(20)
 
-        script = generate_script(tour_name, price, highlights, description, max_words=max_words)
+        script = generate_script(tour_raw=tour_raw, max_words=max_words)
         script = clean_script(script)
 
         if not script or len(script) < 10:
@@ -145,39 +134,38 @@ if submitted:
 
         # Bước 4: Ghép video
         with status:
-            st.write("🎬 FFmpeg đang ghép ảnh + audio...")
+            st.write("🎬 Đang ghép video + chuyển cảnh + hook...")
         progress.progress(55)
 
-        logo_path = "assets/logo.png" if os.path.exists("assets/logo.png") else None
+        logo_path   = "assets/logo.png" if os.path.exists("assets/logo.png") else None
         draft_video = os.path.join(temp_dir, "draft.mp4")
 
         build_video(
-            media_paths=image_paths,
+            media_paths=media_paths,
             audio_path=audio_path,
             output_path=draft_video,
             logo_path=logo_path,
             bg_music_path=bg_music_path,
+            script=script,
         )
 
-        # Bước 5: Subtitle + xuất file cuối
-        final_video = os.path.join("output", f"{slugify(tour_name)}_{int(time.time())}.mp4")
-        srt_final = None
+        # Bước 5: Subtitle
+        final_video = os.path.join("output", f"{slugify(tour_raw[:30])}_{int(time.time())}.mp4")
+        srt_final   = None
 
         if add_subtitle:
             with status:
-                st.write("📝 Whisper đang nhận dạng giọng nói...")
-            progress.progress(70)
+                st.write("📝 Đang tạo subtitle từ script...")
+            progress.progress(75)
 
             srt_path = os.path.join(temp_dir, "subtitle.srt")
             generate_subtitles(audio_path, srt_path, script=script)
 
             with status:
                 st.write("🔥 Đang burn subtitle vào video...")
-            progress.progress(85)
+            progress.progress(88)
 
             burn_subtitles(draft_video, srt_path, final_video)
-
-            # Lưu SRT kèm để upload TikTok nếu muốn
             srt_final = final_video.replace(".mp4", ".srt")
             shutil.copy(srt_path, srt_final)
         else:
@@ -186,7 +174,6 @@ if submitted:
         progress.progress(100)
         status.update(label="✅ Hoàn thành!", state="complete")
 
-        # Kết quả
         st.success("🎉 Video tạo thành công!")
         st.video(final_video)
 
@@ -216,8 +203,6 @@ if submitted:
 
         with st.expander("📁 Đường dẫn file"):
             st.code(final_video)
-            if srt_final:
-                st.code(srt_final)
 
     except Exception as e:
         st.error(f"❌ Lỗi: {str(e)}")
@@ -225,3 +210,16 @@ if submitted:
 
     finally:
         clean_temp(temp_dir)
+
+
+# Thêm vào app.py — cho phép khách nhập key của họ
+with st.sidebar:
+    st.subheader("⚙️ Cài đặt API")
+    openai_key = st.text_input("OpenAI API Key", type="password",
+                                value=os.getenv("OPENAI_API_KEY", ""))
+    fpt_key    = st.text_input("FPT AI Key", type="password",
+                                value=os.getenv("FPT_API_KEY", ""))
+    if openai_key:
+        os.environ["OPENAI_API_KEY"] = openai_key
+    if fpt_key:
+        os.environ["FPT_API_KEY"] = fpt_key

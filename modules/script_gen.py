@@ -1,4 +1,4 @@
-# modules/script_gen.py — dùng OpenAI thay Gemini
+import re
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
@@ -7,37 +7,60 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-def generate_script(
-    tour_name: str, price: str, highlights: str, description: str, max_words: int = 130
-) -> str:
+def generate_script(tour_raw: str, max_words: int = 130) -> str:
+    prompt = f"""Bạn là chuyên gia marketing du lịch Việt Nam.
 
-    prompt = f"""Bạn là chuyên gia marketing du lịch. Hãy viết script cho video Shorts/Reels 45 giây.
+Dưới đây là thông tin thô về một tour du lịch:
+---
+{tour_raw}
+---
 
-THÔNG TIN TOUR:
-- Tên tour: {tour_name}
-- Giá: {price}
-- Điểm nổi bật: {highlights}
-- Mô tả: {description}
+Nhiệm vụ: Viết script video Shorts/Reels 30-45 giây từ thông tin trên.
 
-YÊU CẦU SCRIPT:
-1. Hook 3 giây đầu: câu hỏi hoặc tuyên bố gây tò mò, KHÔNG bắt đầu bằng "Bạn có muốn"
-2. Nội dung chính 35 giây: 3 điểm nổi bật ngắn gọn, hấp dẫn
-3. CTA 7 giây cuối: kêu gọi liên hệ/đặt tour ngay
+CẤU TRÚC BẮT BUỘC:
+1. Hook 2-3 giây: 1 câu ngắn gây sốc/tò mò, liên quan trực tiếp đến tour. Ví dụ: "Chỉ 3 triệu cho 3 ngày thiên đường!" hoặc "Đà Lạt đang gọi tên bạn!"
+2. Nội dung 25-35 giây: 3-4 điểm nổi bật ngắn gọn, hình ảnh rõ ràng
+3. CTA cuối: "Liên hệ ngay để nhận ưu đãi đặc biệt!"
 
 QUY TẮC:
-- Viết thuần tiếng Việt, giọng tự nhiên như đang nói chuyện
-- Không dùng ký tự đặc biệt, emoji trong script
+- Tiếng Việt tự nhiên, như người nói chuyện
+- KHÔNG dùng markdown, emoji, ký tự đặc biệt
 - Mỗi câu ngắn, dễ đọc to
-- Tổng KHÔNG QUÁ {max_words} từ. Đếm kỹ trước khi trả lời.
-- Kết thúc bằng: "Liên hệ ngay hôm nay để nhận ưu đãi đặc biệt!"
+- Tổng KHÔNG QUÁ {max_words} từ
+- Nhắc đến giá nếu có trong thông tin
 
-CHỈ trả về nội dung script, không có tiêu đề hay giải thích."""
+CHỈ trả về script, không giải thích."""
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.8,
-        max_tokens=500,
+        temperature=0.85,
+        max_tokens=600,
     )
 
     return response.choices[0].message.content.strip()
+
+
+def parse_tour_info(tour_raw: str) -> dict:
+    """Parse thông tin tour từ raw text — dùng nếu cần extract riêng."""
+    prompt = f"""Extract thông tin từ text sau thành JSON:
+{tour_raw}
+
+Trả về JSON với keys: tour_name, price, highlights, description.
+Nếu không tìm thấy field nào thì để chuỗi rỗng.
+CHỈ trả về JSON, không markdown."""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        max_tokens=300,
+    )
+
+    try:
+        text = response.choices[0].message.content.strip()
+        text = re.sub(r"```json|```", "", text).strip()
+        import json
+        return json.loads(text)
+    except Exception:
+        return {"tour_name": "", "price": "", "highlights": tour_raw, "description": ""}

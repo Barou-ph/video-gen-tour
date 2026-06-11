@@ -186,6 +186,7 @@ def build_video(
     output_path: str,
     logo_path: str = None,
     bg_music_path: str = None,
+    script: str = None,        # ← thêm dòng này
 ) -> str:
 
     temp_dir = tempfile.mkdtemp()
@@ -220,9 +221,30 @@ def build_video(
             output_path
         ], check=True, capture_output=True)
 
+        # Thêm hook overlay nếu có script
+        if script:
+            hook_text = script.split('.')[0].strip()  # Lấy câu đầu tiên
+            if hook_text:
+                hook_out = output_path.replace(".mp4", "_h.mp4")
+                try:
+                    _add_hook_overlay(output_path, hook_text, hook_out)
+                    shutil.move(hook_out, output_path)
+                    print(f"[VIDEO] Hook: {hook_text[:50]}...")
+                except Exception as e:
+                    print(f"[VIDEO] Hook overlay lỗi (bỏ qua): {e}")
+
         print(f"[VIDEO] Done → {output_path} ({_get_duration(output_path):.1f}s)")
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     return output_path
+
+def _run_ffmpeg(cmd: list, step: str = ""):
+    """Wrapper chạy FFmpeg với error message rõ ràng."""
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"FFmpeg lỗi ở bước '{step}':\n{result.stderr[-500:]}"
+        )
+    return result
