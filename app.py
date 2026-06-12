@@ -10,10 +10,12 @@ from modules.voice_gen import text_to_speech, clean_script
 from modules.script_gen import generate_script, parse_tour_info
 from modules.video_builder import build_video
 from modules.subtitle_gen import generate_subtitles, burn_subtitles
-from modules.utils import ensure_dirs, make_temp_dir, clean_temp
+from modules.utils import ensure_dirs, make_temp_dir, clean_temp, cleanup_old_outputs, cleanup_old_temps
 
 load_dotenv()
 ensure_dirs()
+cleanup_old_outputs()   # Xóa video cũ hơn 7 ngày
+cleanup_old_temps()     # Xóa temp cũ hơn 2 tiếng
 
 
 def slugify(text: str) -> str:
@@ -25,11 +27,51 @@ def slugify(text: str) -> str:
 
 
 st.set_page_config(page_title="Tour Video Generator", page_icon="🎬", layout="centered")
+
+# ─── Sidebar API Keys ─────────────────────────────────────────────────────────
+with st.sidebar:
+    st.subheader("⚙️ Cài đặt API")
+    st.caption("Nhập key của bạn — không lưu lại sau khi tắt app")
+
+    openai_key = st.text_input(
+        "OpenAI API Key",
+        type="password",
+        value=os.getenv("OPENAI_API_KEY", ""),
+        placeholder="sk-...",
+    )
+    fpt_key = st.text_input(
+        "FPT AI Key",
+        type="password",
+        value=os.getenv("FPT_API_KEY", ""),
+        placeholder="FPT API key",
+    )
+
+    # Apply key ngay khi nhập — trước khi form submit
+    if openai_key:
+        os.environ["OPENAI_API_KEY"] = openai_key
+    if fpt_key:
+        os.environ["FPT_API_KEY"] = fpt_key
+
+    # Hiển thị trạng thái key
+    st.divider()
+    if os.getenv("OPENAI_API_KEY"):
+        st.success("✅ OpenAI key đã set")
+    else:
+        st.error("❌ Chưa có OpenAI key")
+
+    if os.getenv("FPT_API_KEY"):
+        st.success("✅ FPT AI key đã set")
+    else:
+        st.error("❌ Chưa có FPT key")
+
+    st.divider()
+    st.caption("💡 Để key tự động load, tạo file `.env` với:\n```\nOPENAI_API_KEY=sk-...\nFPT_API_KEY=...\n```")
+
+# ─── Main UI ──────────────────────────────────────────────────────────────────
 st.title("🎬 Tour Video Generator")
 st.caption("Tự động tạo video Shorts/Reels quảng bá tour du lịch")
 
 with st.form("tour_form"):
-
     st.subheader("📋 Thông tin tour")
     tour_raw = st.text_area(
         "Dán thông tin tour vào đây *",
@@ -75,13 +117,28 @@ Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
         "🚀 Tạo Video", use_container_width=True, type="primary"
     )
 
+# ─── Xử lý ────────────────────────────────────────────────────────────────────
 if submitted:
+    # Validate
     if not tour_raw or len(tour_raw.strip()) < 10:
         st.error("Vui lòng nhập thông tin tour!")
         st.stop()
     if not uploaded_files:
         st.error("Vui lòng upload ít nhất 1 ảnh hoặc video!")
         st.stop()
+    if not os.getenv("OPENAI_API_KEY"):
+        st.error("Chưa nhập OpenAI API Key! Nhập vào sidebar bên trái.")
+        st.stop()
+    if not os.getenv("FPT_API_KEY"):
+        st.error("Chưa nhập FPT AI Key! Nhập vào sidebar bên trái.")
+        st.stop()
+
+    # Kiểm tra file size
+    for f in uploaded_files:
+        size_mb = f.size / (1024 * 1024)
+        if size_mb > 100:
+            st.error(f"File '{f.name}' quá lớn ({size_mb:.0f}MB). Giới hạn 100MB/file.")
+            st.stop()
 
     temp_dir = make_temp_dir()
 
@@ -150,8 +207,10 @@ if submitted:
         )
 
         # Bước 5: Subtitle
-        final_video = os.path.join("output", f"{slugify(tour_raw[:30])}_{int(time.time())}.mp4")
-        srt_final   = None
+        final_video = os.path.join(
+            "output", f"{slugify(tour_raw[:30])}_{int(time.time())}.mp4"
+        )
+        srt_final = None
 
         if add_subtitle:
             with status:
@@ -174,6 +233,7 @@ if submitted:
         progress.progress(100)
         status.update(label="✅ Hoàn thành!", state="complete")
 
+        # Kết quả
         st.success("🎉 Video tạo thành công!")
         st.video(final_video)
 
@@ -210,16 +270,3 @@ if submitted:
 
     finally:
         clean_temp(temp_dir)
-
-
-# Thêm vào app.py — cho phép khách nhập key của họ
-with st.sidebar:
-    st.subheader("⚙️ Cài đặt API")
-    openai_key = st.text_input("OpenAI API Key", type="password",
-                                value=os.getenv("OPENAI_API_KEY", ""))
-    fpt_key    = st.text_input("FPT AI Key", type="password",
-                                value=os.getenv("FPT_API_KEY", ""))
-    if openai_key:
-        os.environ["OPENAI_API_KEY"] = openai_key
-    if fpt_key:
-        os.environ["FPT_API_KEY"] = fpt_key
