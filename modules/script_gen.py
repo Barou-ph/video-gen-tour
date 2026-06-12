@@ -28,6 +28,10 @@ QUY TẮC:
 - Mỗi câu ngắn, dễ đọc to
 - Tổng KHÔNG QUÁ {max_words} từ
 - Nhắc đến giá nếu có trong thông tin
+- Dùng dấu chấm than (!) cho câu nhấn mạnh
+- Dùng dấu chấm lửng (...) cho chỗ ngừng tự nhiên
+- Câu hook PHẢI có dấu chấm than
+- Xen kẽ câu ngắn và câu dài để tạo nhịp điệu
 
 CHỈ trả về script, không giải thích."""
 

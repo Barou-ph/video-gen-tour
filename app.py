@@ -6,7 +6,7 @@ import unicodedata
 import re
 from dotenv import load_dotenv
 
-from modules.voice_gen import text_to_speech, clean_script
+from modules.voice_gen import text_to_speech, clean_script, VOICES
 from modules.script_gen import generate_script, parse_tour_info
 from modules.video_builder import build_video
 from modules.subtitle_gen import generate_subtitles, burn_subtitles
@@ -14,8 +14,8 @@ from modules.utils import ensure_dirs, make_temp_dir, clean_temp, cleanup_old_ou
 
 load_dotenv()
 ensure_dirs()
-cleanup_old_outputs()   # Xóa video cũ hơn 7 ngày
-cleanup_old_temps()     # Xóa temp cũ hơn 2 tiếng
+cleanup_old_outputs()
+cleanup_old_temps()
 
 
 def slugify(text: str) -> str:
@@ -28,44 +28,31 @@ def slugify(text: str) -> str:
 
 st.set_page_config(page_title="Tour Video Generator", page_icon="🎬", layout="centered")
 
-# ─── Sidebar API Keys ─────────────────────────────────────────────────────────
+# ─── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.subheader("⚙️ Cài đặt API")
     st.caption("Nhập key của bạn — không lưu lại sau khi tắt app")
 
     openai_key = st.text_input(
-        "OpenAI API Key",
-        type="password",
-        value=os.getenv("OPENAI_API_KEY", ""),
-        placeholder="sk-...",
+        "OpenAI API Key", type="password",
+        value=os.getenv("OPENAI_API_KEY", ""), placeholder="sk-...",
     )
     fpt_key = st.text_input(
-        "FPT AI Key",
-        type="password",
-        value=os.getenv("FPT_API_KEY", ""),
-        placeholder="FPT API key",
+        "FPT AI Key", type="password",
+        value=os.getenv("FPT_API_KEY", ""), placeholder="FPT API key",
     )
 
-    # Apply key ngay khi nhập — trước khi form submit
     if openai_key:
         os.environ["OPENAI_API_KEY"] = openai_key
     if fpt_key:
         os.environ["FPT_API_KEY"] = fpt_key
 
-    # Hiển thị trạng thái key
     st.divider()
-    if os.getenv("OPENAI_API_KEY"):
-        st.success("✅ OpenAI key đã set")
-    else:
-        st.error("❌ Chưa có OpenAI key")
-
-    if os.getenv("FPT_API_KEY"):
-        st.success("✅ FPT AI key đã set")
-    else:
-        st.error("❌ Chưa có FPT key")
+    st.success("✅ OpenAI key đã set") if os.getenv("OPENAI_API_KEY") else st.error("❌ Chưa có OpenAI key")
+    st.success("✅ FPT AI key đã set") if os.getenv("FPT_API_KEY") else st.error("❌ Chưa có FPT key")
 
     st.divider()
-    st.caption("💡 Để key tự động load, tạo file `.env` với:\n```\nOPENAI_API_KEY=sk-...\nFPT_API_KEY=...\n```")
+    st.caption("💡 Tạo file `.env`:\n```\nOPENAI_API_KEY=sk-...\nFPT_API_KEY=...\n```")
 
 # ─── Main UI ──────────────────────────────────────────────────────────────────
 st.title("🎬 Tour Video Generator")
@@ -94,18 +81,25 @@ Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
     )
 
     with st.expander("⚙️ Tuỳ chỉnh nâng cao"):
-        col3, col4 = st.columns(2)
-        with col3:
-            voice_speed = st.select_slider(
+        col1, col2 = st.columns(2)
+        with col1:
+            voice_label = st.selectbox(
+                "Giọng đọc",
+                options=list(VOICES.keys()),
+                index=0,
+            )
+        with col2:
+            fpt_speed = st.select_slider(
                 "Tốc độ giọng đọc",
-                options=["-20%", "-10%", "+0%", "+10%", "+20%"],
-                value="+0%",
+                options=["0", "1", "2"],
+                value="1",
+                format_func=lambda x: {"0": "🐢 Chậm", "1": "😐 Bình thường", "2": "⚡ Nhanh"}[x],
             )
-        with col4:
-            max_words = st.slider(
-                "Độ dài script (số từ)",
-                min_value=80, max_value=200, value=130, step=10,
-            )
+
+        max_words = st.slider(
+            "Độ dài script (số từ)",
+            min_value=80, max_value=200, value=130, step=10,
+        )
         bg_music = st.file_uploader(
             "🎵 Nhạc nền (MP3, tuỳ chọn)",
             type=["mp3"],
@@ -119,7 +113,6 @@ Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
 
 # ─── Xử lý ────────────────────────────────────────────────────────────────────
 if submitted:
-    # Validate
     if not tour_raw or len(tour_raw.strip()) < 10:
         st.error("Vui lòng nhập thông tin tour!")
         st.stop()
@@ -133,13 +126,13 @@ if submitted:
         st.error("Chưa nhập FPT AI Key! Nhập vào sidebar bên trái.")
         st.stop()
 
-    # Kiểm tra file size
     for f in uploaded_files:
         size_mb = f.size / (1024 * 1024)
         if size_mb > 100:
             st.error(f"File '{f.name}' quá lớn ({size_mb:.0f}MB). Giới hạn 100MB/file.")
             st.stop()
 
+    voice_id = VOICES[voice_label]
     temp_dir = make_temp_dir()
 
     try:
@@ -164,7 +157,7 @@ if submitted:
             with open(bg_music_path, "wb") as f:
                 f.write(bg_music.read())
 
-        # Bước 2: AI parse + viết script
+        # Bước 2: Script
         with status:
             st.write("✍️ AI đang đọc thông tin và viết script...")
         progress.progress(20)
@@ -183,18 +176,18 @@ if submitted:
 
         # Bước 3: TTS
         with status:
-            st.write("🎙️ FPT AI đang tạo giọng đọc...")
+            st.write(f"🎙️ FPT AI đang tạo giọng ({voice_label})...")
         progress.progress(40)
 
         audio_path = os.path.join(temp_dir, "voice.mp3")
-        text_to_speech(script, audio_path, rate=voice_speed)
+        text_to_speech(script, audio_path, voice=voice_id, speed=fpt_speed)
 
         # Bước 4: Ghép video
         with status:
             st.write("🎬 Đang ghép video + chuyển cảnh + hook...")
         progress.progress(55)
 
-        logo_path   = "assets/logo.png" if os.path.exists("assets/logo.png") else None
+        logo_path = "assets/logo.png" if os.path.exists("assets/logo.png") else None
         draft_video = os.path.join(temp_dir, "draft.mp4")
 
         build_video(
@@ -233,7 +226,6 @@ if submitted:
         progress.progress(100)
         status.update(label="✅ Hoàn thành!", state="complete")
 
-        # Kết quả
         st.success("🎉 Video tạo thành công!")
         st.video(final_video)
 
