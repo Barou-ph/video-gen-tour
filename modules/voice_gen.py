@@ -15,12 +15,62 @@ VOICES = {
     "linhsan - Nữ Trung (dịu dàng)": "linhsan",
 }
 
+# Thêm vào voice_gen.py, trước clean_script
+
+ABBREVIATIONS = {
+    # Tour
+    r'\b(\d+)N(\d+)Đ\b':   lambda m: f"{m.group(1)} ngày {m.group(2)} đêm",
+    r'\bN(\d+)\b':          lambda m: f"ngày {m.group(1)}",
+
+    # Đơn vị tiền
+    r'\b(\d+)tr\b':         lambda m: f"{m.group(1)} triệu",
+    r'\b(\d+)k\b':          lambda m: f"{m.group(1)} nghìn",
+    r'\b(\d+)đ\b':          lambda m: f"{m.group(1)} đồng",
+    r'(\d+)\.000đ':         lambda m: f"{m.group(1)} nghìn đồng",
+    r'(\d+)\.000\.000đ':    lambda m: f"{m.group(1)} triệu đồng",
+
+    # Thời gian
+    r'\bT(\d)\b':           lambda m: f"thứ {m.group(1)}",
+    r'\bCN\b':              "chủ nhật",
+    r'\bSN\b':              "sinh nhật",
+
+    # Du lịch phổ biến
+    r'\bHDV\b':             "hướng dẫn viên",
+    r'\bKS\b':              "khách sạn",
+    r'\bVJ\b':              "Vietjet",
+    r'\bVNA\b':             "Vietnam Airlines",
+    r'\bTP\.HCM\b':         "thành phố Hồ Chí Minh",
+    r'\bHN\b':              "Hà Nội",
+    r'\bĐN\b':              "Đà Nẵng",
+    r'\bĐL\b':              "Đà Lạt",
+    r'\bNT\b':              "Nha Trang",
+    r'\bPQ\b':              "Phú Quốc",
+    r'\bHPG\b':             "Hạ Long",
+    r'\bBB\b':              "Bắc Bộ",
+    r'\bpax\b':             "người",
+    r'\bvé\b':              "vé",
+    r'\bpkg\b':             "gói",
+
+    # Số điện thoại — đọc từng số
+    r'\b0(\d{9})\b':        lambda m: "0 " + " ".join(m.group(1)),
+}
+
+
+def normalize_script(text: str) -> str:
+    """Mở rộng viết tắt để AI TTS đọc tự nhiên hơn."""
+    for pattern, replacement in ABBREVIATIONS.items():
+        if callable(replacement):
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        else:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
 
 def clean_script(text: str) -> str:
     text = re.sub(r'[*_#`~<>|\\]', '', text)
     text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
     text = re.sub(r'[\u200b\u200c\u200d\ufeff\u00ad]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
+    text = normalize_script(text)   # ← thêm dòng này
     return text
 
 

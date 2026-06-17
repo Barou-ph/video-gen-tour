@@ -29,9 +29,12 @@ def slugify(text: str) -> str:
 st.set_page_config(page_title="Tour Video Generator", page_icon="🎬", layout="centered")
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
+
 with st.sidebar:
-    st.subheader("⚙️ Cài đặt API")
-    st.caption("Nhập key của bạn — không lưu lại sau khi tắt app")
+    st.title("⚙️ Cài đặt")
+
+    st.subheader("🔑 API Keys")
+    st.caption("Nhập key — không lưu sau khi tắt app")
 
     openai_key = st.text_input(
         "OpenAI API Key", type="password",
@@ -39,7 +42,7 @@ with st.sidebar:
     )
     fpt_key = st.text_input(
         "FPT AI Key", type="password",
-        value=os.getenv("FPT_API_KEY", ""), placeholder="FPT API key",
+        value=os.getenv("FPT_API_KEY", ""), placeholder="Dán key FPT vào đây",
     )
 
     if openai_key:
@@ -48,11 +51,32 @@ with st.sidebar:
         os.environ["FPT_API_KEY"] = fpt_key
 
     st.divider()
-    st.success("✅ OpenAI key đã set") if os.getenv("OPENAI_API_KEY") else st.error("❌ Chưa có OpenAI key")
-    st.success("✅ FPT AI key đã set") if os.getenv("FPT_API_KEY") else st.error("❌ Chưa có FPT key")
+
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        if os.getenv("OPENAI_API_KEY"):
+            st.success("OpenAI ✅")
+        else:
+            st.error("OpenAI ❌")
+    with col_s2:
+        if os.getenv("FPT_API_KEY"):
+            st.success("FPT ✅")
+        else:
+            st.error("FPT ❌")
 
     st.divider()
-    st.caption("💡 Tạo file `.env`:\n```\nOPENAI_API_KEY=sk-...\nFPT_API_KEY=...\n```")
+    st.subheader("📖 Hướng dẫn")
+    st.markdown("""
+1. Nhập API keys bên trên
+2. Dán thông tin tour vào ô chính
+3. Upload ảnh/video tour
+4. Bấm **Tạo Video**
+
+💡 Để keys tự load, tạo file `.env`:
+OPENAI_API_KEY=sk-...
+
+FPT_API_KEY=...
+    """)
 
 # ─── Main UI ──────────────────────────────────────────────────────────────────
 st.title("🎬 Tour Video Generator")

@@ -32,6 +32,8 @@ QUY TẮC:
 - Dùng dấu chấm lửng (...) cho chỗ ngừng tự nhiên
 - Câu hook PHẢI có dấu chấm than
 - Xen kẽ câu ngắn và câu dài để tạo nhịp điệu
+- KHÔNG dùng viết tắt: viết "3 ngày 2 đêm" thay vì "3N2Đ", "2 triệu 9" thay vì "2.9tr", "thứ Sáu" thay vì "T6"
+- Số tiền viết bằng chữ: "hai triệu chín trăm nghìn đồng" hoặc "chỉ 2 triệu 9"
 
 CHỈ trả về script, không giải thích."""
 
