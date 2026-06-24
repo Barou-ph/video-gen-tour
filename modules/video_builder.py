@@ -150,17 +150,13 @@ def _mix_audio(voice_path: str, music_path: str, duration: float, output: str):
 
 
 def _add_logo(video: str, logo: str, output: str):
-    """
-    Chèn logo vào góc trên trái, hiện suốt video.
-    Logo PNG nền trong suốt sẽ đẹp hơn JPG.
-    """
     result = subprocess.run([
         "ffmpeg", "-y",
         "-i", video,
         "-i", logo,
         "-filter_complex",
-        "[1:v]scale=160:-1[logo];"          # resize logo 160px chiều ngang
-        "[0:v][logo]overlay=24:24",          # góc trên trái, cách viền 24px
+        "[1:v]scale=220:-1[logo];"      # tăng từ 160 lên 220px
+        "[0:v][logo]overlay=24:24",
         "-c:a", "copy",
         output
     ], capture_output=True, text=True)
@@ -169,11 +165,19 @@ def _add_logo(video: str, logo: str, output: str):
         print(f"[VIDEO] Logo lỗi (bỏ qua): {result.stderr[-200:]}")
         shutil.copy(video, output)
 
-
 def _add_hook_overlay(video_path: str, hook_text: str, output: str):
-    """Thêm text hook nổi bật vào 3 giây đầu video."""
     from PIL import Image, ImageDraw, ImageFont
-    import json
+    import json, requests as req
+
+    # Tải Montserrat Bold nếu chưa có — font chuẩn marketing
+    font_path = "assets/Montserrat-Bold.ttf"
+    if not os.path.exists(font_path):
+        os.makedirs("assets", exist_ok=True)
+        print("[HOOK] Tải font Montserrat Bold...")
+        url = "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-Bold.ttf"
+        r = req.get(url, timeout=15)
+        with open(font_path, "wb") as f:
+            f.write(r.content)
 
     probe = subprocess.run([
         "ffprobe", "-v", "quiet", "-print_format", "json",
@@ -190,51 +194,49 @@ def _add_hook_overlay(video_path: str, hook_text: str, output: str):
     img  = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Gradient tối ở phần trên
-    for y in range(int(height * 0.45)):
-        alpha = int(160 * (1 - y / (height * 0.45)))
+    # Gradient tối phía trên để chữ nổi
+    for y in range(int(height * 0.40)):
+        alpha = int(150 * (1 - y / (height * 0.40)))
         draw.line([(0, y), (width, y)], fill=(0, 0, 0, alpha))
 
     try:
-        font_hook = ImageFont.truetype("assets/RobotoBold.ttf", 68)
+        font_hook = ImageFont.truetype(font_path, 72)
     except Exception:
         try:
-            font_hook = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 68)
+            font_hook = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 72)
         except Exception:
             font_hook = ImageFont.load_default()
 
-    # Wrap text
-    words, lines, cur = hook_text.split(), [], ""
-    max_w = int(width * 0.85)
+    # Giới hạn hook 1 dòng — cắt nếu quá dài
+    max_w = int(width * 0.88)
+    words, cur = hook_text.split(), ""
     for word in words:
         test = (cur + " " + word).strip()
         bbox = draw.textbbox((0, 0), test, font=font_hook)
-        if bbox[2] - bbox[0] > max_w and cur:
-            lines.append(cur)
-            cur = word
-        else:
-            cur = test
-    if cur:
-        lines.append(cur)
+        if bbox[2] - bbox[0] > max_w:
+            break
+        cur = test
+    line = cur if cur else hook_text[:30]
 
-    line_h  = 80
-    total_h = len(lines) * line_h
-    y_cur   = int(height * 0.28) - total_h // 2
+    # Vị trí: 1/3 từ trên xuống, căn giữa
+    bbox = draw.textbbox((0, 0), line, font=font_hook)
+    tw   = bbox[2] - bbox[0]
+    x    = (width - tw) // 2
+    y    = int(height * 0.28)
 
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font_hook)
-        x = (width - (bbox[2] - bbox[0])) // 2
-        for dx, dy in [(-3,0),(3,0),(0,-3),(0,3),(-3,-3),(3,-3),(-3,3),(3,3)]:
-            draw.text((x+dx, y_cur+dy), line, font=font_hook, fill=(0,0,0,255))
-        draw.text((x, y_cur), line, font=font_hook, fill=(255, 220, 0, 255))
-        y_cur += line_h
+    # Shadow đậm
+    for dx, dy in [(-4,0),(4,0),(0,-4),(0,4),(-4,-4),(4,-4),(-4,4),(4,4),
+                   (-2,-2),(2,-2),(-2,2),(2,2)]:
+        draw.text((x+dx, y+dy), line, font=font_hook, fill=(0, 0, 0, 255))
+
+    # Chữ vàng Montserrat
+    draw.text((x, y), line, font=font_hook, fill=(255, 215, 0, 255))
 
     img.save(hook_img, "PNG")
 
     result = subprocess.run([
         "ffmpeg", "-y",
-        "-i", video_path,
-        "-i", hook_img,
+        "-i", video_path, "-i", hook_img,
         "-filter_complex",
         "[0:v][1:v]overlay=0:0:enable='between(t,0,3)'[v]",
         "-map", "[v]", "-map", "0:a",
@@ -244,7 +246,6 @@ def _add_hook_overlay(video_path: str, hook_text: str, output: str):
     ], capture_output=True, text=True)
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
-
     if result.returncode != 0:
         shutil.copy(video_path, output)
 

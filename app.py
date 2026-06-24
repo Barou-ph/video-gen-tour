@@ -7,7 +7,7 @@ import re
 from dotenv import load_dotenv
 
 from modules.voice_gen import text_to_speech, clean_script, VOICES
-from modules.script_gen import generate_script, parse_tour_info
+from modules.script_gen import generate_script, parse_tour_info, generate_hook
 from modules.video_builder import build_video
 from modules.subtitle_gen import generate_subtitles, burn_subtitles
 from modules.utils import ensure_dirs, make_temp_dir, clean_temp, cleanup_old_outputs, cleanup_old_temps
@@ -181,24 +181,26 @@ if submitted:
             with open(bg_music_path, "wb") as f:
                 f.write(bg_music.read())
 
-        # Bước 2: Script
+        # Bước 2: Script & Hook
         with status:
-            st.write("✍️ AI đang đọc thông tin và viết script...")
+            st.write("✍️ AI đang đọc thông tin, viết script và tạo hook...")
         progress.progress(20)
 
         script = generate_script(tour_raw=tour_raw, max_words=max_words)
         script = clean_script(script)
+        hook = generate_hook(tour_raw)   # Tạo hook ngắn gọn 1 dòng
 
         if not script or len(script) < 10:
             st.error("Script rỗng. Thử lại!")
             st.stop()
 
         with status:
-            st.write("✅ Script xong!")
-            with st.expander("📄 Xem script"):
-                st.write(script)
+            st.write("✅ Script & Hook xong!")
+            with st.expander("📄 Xem chi tiết từ AI"):
+                st.markdown(f"**Hook tiêu đề:** {hook}")
+                st.markdown(f"**Bài đọc:**\n{script}")
 
-        # Bước 3: TTS
+        # Bước 3: TTS (Chuyển văn bản thành giọng đọc)
         with status:
             st.write(f"🎙️ FPT AI đang tạo giọng ({voice_label})...")
         progress.progress(40)
@@ -208,19 +210,20 @@ if submitted:
 
         # Bước 4: Ghép video
         with status:
-            st.write("🎬 Đang ghép video + chuyển cảnh + hook...")
+            st.write("🎬 Đang ghép video + chuyển cảnh + chèn hook...")
         progress.progress(55)
 
         logo_path = "assets/logo.png" if os.path.exists("assets/logo.png") else None
         draft_video = os.path.join(temp_dir, "draft.mp4")
 
+        # Sử dụng biến `hook` để làm overlay text chạy trên video
         build_video(
             media_paths=media_paths,
             audio_path=audio_path,
             output_path=draft_video,
             logo_path=logo_path,
             bg_music_path=bg_music_path,
-            script=script,
+            script=hook,  
         )
 
         # Bước 5: Subtitle

@@ -85,3 +85,27 @@ CHỈ trả về JSON, không markdown."""
         return json.loads(text)
     except Exception:
         return {"tour_name": "", "price": "", "highlights": tour_raw, "description": ""}
+
+def generate_hook(tour_raw: str) -> str:
+    """Sinh 1 câu hook ngắn gọn tối đa 8 từ cho overlay video."""
+    prompt = f"""Từ thông tin tour sau, viết đúng 1 câu hook cực ngắn (tối đa 8 từ) 
+bằng tiếng Việt để hiển thị 3 giây đầu video TikTok.
+
+THÔNG TIN:
+{tour_raw}
+
+YÊU CẦU:
+- Tối đa 8 từ, không dấu chấm cuối
+- Gây tò mò hoặc cảm xúc mạnh ngay lập tức
+- Không dùng emoji, ký tự đặc biệt
+- Ví dụ tốt: "Đà Lạt đang gọi tên bạn" / "3 ngày 2 đêm chỉ từ 2 triệu 9"
+
+CHỈ trả về câu hook, không giải thích."""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.9,
+        max_tokens=30,
+    )
+    return response.choices[0].message.content.strip().strip('."\'')

@@ -119,7 +119,8 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str) -> str:
             os.path.join(frames_dir, "frame_%06d.jpg")
         ], check=True, capture_output=True)
 
-        font        = _get_font(46)
+        font   = _get_font(54)   # tăng từ 46/52 lên 54
+        line_h = 66              # tăng line height theo
         frame_files = sorted(os.listdir(frames_dir))
         print(f"[SUB] Vẽ subtitle lên {len(frame_files)} frames...")
 
