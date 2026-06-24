@@ -1,10 +1,16 @@
 import re
+import json
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# ─── Thông tin công ty — chỉnh tại đây nếu cần ────────────────────────────────
+COMPANY_NAME    = "Đại lý Du lịch Khanh"
+COMPANY_SLOGAN  = "chi phí minh bạch, không phát sinh phụ phí, dịch vụ tận tâm từ đầu đến cuối"
+COMPANY_CTA     = f"Hãy để {COMPANY_NAME} đồng hành cùng bạn trên mọi hành trình!"
 
 
 def generate_script(tour_raw: str, max_words: int = 130) -> str:
@@ -15,15 +21,25 @@ Dưới đây là thông tin thô về một tour du lịch:
 {tour_raw}
 ---
 
+THÔNG TIN CÔNG TY (bắt buộc nhắc đến ở CTA cuối):
+- Tên: {COMPANY_NAME}
+- Cam kết: {COMPANY_SLOGAN}
+
 Nhiệm vụ: Viết script video Shorts/Reels 30-45 giây từ thông tin trên.
 
 CẤU TRÚC BẮT BUỘC:
-1. Hook 2-3 giây: 1 câu ngắn gây sốc/tò mò, liên quan trực tiếp đến tour. Ví dụ: "Chỉ 3 triệu cho 3 ngày thiên đường!" hoặc "Đà Lạt đang gọi tên bạn!"
+1. Hook 2-3 giây: 1 câu ngắn gây sốc/tò mò, liên quan trực tiếp đến tour.
+   Ví dụ tốt: "Chỉ 3 triệu cho 3 ngày thiên đường!" hoặc "Đà Lạt đang gọi tên bạn!"
+   KHÔNG được bắt đầu bằng "Hôm nay mình", "Xin chào", "Bạn có muốn"
+
 2. Nội dung 25-35 giây: 3-4 điểm nổi bật ngắn gọn, hình ảnh rõ ràng
-3. CTA cuối: "Liên hệ ngay để nhận ưu đãi đặc biệt!"
+
+3. CTA cuối: nhắc tên "{COMPANY_NAME}" + 1 cam kết ngắn + gợi ý liên hệ.
+   Ví dụ: "Muốn một chuyến đi {COMPANY_SLOGAN}? Hãy để {COMPANY_NAME} đồng hành cùng bạn!"
+   hoặc: "Liên hệ {COMPANY_NAME} để được tư vấn miễn phí và giá tốt nhất!"
 
 QUY TẮC:
-- Tiếng Việt tự nhiên, như người nói chuyện
+- Tiếng Việt tự nhiên, như người nói chuyện thật
 - KHÔNG dùng markdown, emoji, ký tự đặc biệt
 - Mỗi câu ngắn, dễ đọc to
 - Tổng KHÔNG QUÁ {max_words} từ
@@ -32,10 +48,10 @@ QUY TẮC:
 - Dùng dấu chấm lửng (...) cho chỗ ngừng tự nhiên
 - Câu hook PHẢI có dấu chấm than
 - Xen kẽ câu ngắn và câu dài để tạo nhịp điệu
-- KHÔNG dùng viết tắt: viết "3 ngày 2 đêm" thay vì "3N2Đ", "2 triệu 9" thay vì "2.9tr", "thứ Sáu" thay vì "T6"
-- Số tiền viết bằng chữ: "hai triệu chín trăm nghìn đồng" hoặc "chỉ 2 triệu 9"
+- KHÔNG dùng viết tắt: "3 ngày 2 đêm" thay vì "3N2Đ", "thứ Sáu" thay vì "T6"
+- Số tiền viết bằng chữ: "hai triệu chín" thay vì "2.9tr"
 
-CHỈ trả về script, không giải thích."""
+CHỈ trả về script, không giải thích, không tiêu đề."""
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -48,7 +64,7 @@ CHỈ trả về script, không giải thích."""
 
 
 def parse_tour_info(tour_raw: str) -> dict:
-    """Parse thông tin tour từ raw text — dùng nếu cần extract riêng."""
+    """Parse thông tin tour từ raw text."""
     prompt = f"""Extract thông tin từ text sau thành JSON:
 {tour_raw}
 
@@ -66,7 +82,6 @@ CHỈ trả về JSON, không markdown."""
     try:
         text = response.choices[0].message.content.strip()
         text = re.sub(r"```json|```", "", text).strip()
-        import json
         return json.loads(text)
     except Exception:
         return {"tour_name": "", "price": "", "highlights": tour_raw, "description": ""}
