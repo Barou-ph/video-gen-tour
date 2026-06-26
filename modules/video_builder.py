@@ -149,14 +149,73 @@ def _mix_audio(voice_path: str, music_path: str, duration: float, output: str):
     ], check=True, capture_output=True)
 
 
+def _get_hook_font(size: int):
+    """
+    Load font cho hook text theo thứ tự ưu tiên:
+    1. Nunito-ExtraBold.ttf (tải thủ công vào assets/) — đẹp nhất
+    2. BeVietnamPro-Bold.ttf (tự tải)
+    3. Fallback Windows
+    """
+    from PIL import ImageFont
+    import requests
+
+    # Ưu tiên 1: Nunito ExtraBold — phải tải thủ công từ fonts.google.com
+    nunito = "assets/Nunito-ExtraBold.ttf"
+    if os.path.exists(nunito):
+        try:
+            return ImageFont.truetype(nunito, size)
+        except Exception:
+            pass
+
+    # Ưu tiên 2: Be Vietnam Pro Bold — tự tải
+    beviet = "assets/BeVietnamPro-Bold.ttf"
+    if not os.path.exists(beviet):
+        os.makedirs("assets", exist_ok=True)
+        print("[FONT] Tải Be Vietnam Pro Bold...")
+        for url in [
+            "https://github.com/letteratic/be-vietnam-pro/raw/master/fonts/ttf/BeVietnamPro-Bold.ttf",
+            "https://github.com/googlefonts/BeVietnamPro/raw/main/fonts/ttf/BeVietnamPro-Bold.ttf",
+        ]:
+            try:
+                r = requests.get(url, timeout=20)
+                if r.status_code == 200 and len(r.content) > 50000:
+                    with open(beviet, "wb") as f:
+                        f.write(r.content)
+                    print("[FONT] Be Vietnam Pro OK")
+                    break
+            except Exception:
+                continue
+
+    if os.path.exists(beviet):
+        try:
+            return ImageFont.truetype(beviet, size)
+        except Exception:
+            pass
+
+    # Fallback Windows — có hỗ trợ tiếng Việt
+    for fp in [
+        "C:/Windows/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/tahoma.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+    ]:
+        if os.path.exists(fp):
+            try:
+                return ImageFont.truetype(fp, size)
+            except Exception:
+                continue
+
+    return ImageFont.load_default()
+
+
 def _add_logo(video: str, logo: str, output: str):
+    """Logo góc trên trái, 300px, hiện suốt video."""
     result = subprocess.run([
         "ffmpeg", "-y",
         "-i", video,
         "-i", logo,
         "-filter_complex",
-        "[1:v]scale=220:-1[logo];"      # tăng từ 160 lên 220px
-        "[0:v][logo]overlay=24:24",
+        "[1:v]scale=300:-1[logo];"
+        "[0:v][logo]overlay=32:32",
         "-c:a", "copy",
         output
     ], capture_output=True, text=True)
@@ -165,19 +224,17 @@ def _add_logo(video: str, logo: str, output: str):
         print(f"[VIDEO] Logo lỗi (bỏ qua): {result.stderr[-200:]}")
         shutil.copy(video, output)
 
-def _add_hook_overlay(video_path: str, hook_text: str, output: str):
-    from PIL import Image, ImageDraw, ImageFont
-    import json, requests as req
 
-    # Tải Montserrat Bold nếu chưa có — font chuẩn marketing
-    font_path = "assets/Montserrat-Bold.ttf"
-    if not os.path.exists(font_path):
-        os.makedirs("assets", exist_ok=True)
-        print("[HOOK] Tải font Montserrat Bold...")
-        url = "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-Bold.ttf"
-        r = req.get(url, timeout=15)
-        with open(font_path, "wb") as f:
-            f.write(r.content)
+def _add_hook_overlay(video_path: str, hook_text: str, output: str):
+    """
+    Hook text 3 giây đầu:
+    - Font Nunito ExtraBold (hoặc Be Vietnam Pro Bold)
+    - Size 82px, chữ vàng #FFD700
+    - Nền pill đen mờ ôm sát chữ
+    - Shadow 16 lớp cực đậm
+    """
+    from PIL import Image, ImageDraw
+    import json
 
     probe = subprocess.run([
         "ffprobe", "-v", "quiet", "-print_format", "json",
@@ -194,43 +251,74 @@ def _add_hook_overlay(video_path: str, hook_text: str, output: str):
     img  = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Gradient tối phía trên để chữ nổi
-    for y in range(int(height * 0.40)):
-        alpha = int(150 * (1 - y / (height * 0.40)))
+    # Gradient tối phía trên mạnh
+    for y in range(int(height * 0.50)):
+        alpha = int(200 * (1 - y / (height * 0.50)))
         draw.line([(0, y), (width, y)], fill=(0, 0, 0, alpha))
 
-    try:
-        font_hook = ImageFont.truetype(font_path, 72)
-    except Exception:
-        try:
-            font_hook = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 72)
-        except Exception:
-            font_hook = ImageFont.load_default()
+    font_size = 82
+    font = _get_hook_font(font_size)
 
-    # Giới hạn hook 1 dòng — cắt nếu quá dài
-    max_w = int(width * 0.88)
-    words, cur = hook_text.split(), ""
+    # Wrap text tối đa 2 dòng
+    max_w = int(width * 0.84)
+    words, lines, cur = hook_text.split(), [], ""
     for word in words:
         test = (cur + " " + word).strip()
-        bbox = draw.textbbox((0, 0), test, font=font_hook)
-        if bbox[2] - bbox[0] > max_w:
-            break
-        cur = test
-    line = cur if cur else hook_text[:30]
+        try:
+            bbox   = draw.textbbox((0, 0), test, font=font)
+            w_test = bbox[2] - bbox[0]
+        except Exception:
+            w_test = len(test) * 38
+        if w_test > max_w and cur:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = test
+    if cur:
+        lines.append(cur)
+    lines = lines[:2]
 
-    # Vị trí: 1/3 từ trên xuống, căn giữa
-    bbox = draw.textbbox((0, 0), line, font=font_hook)
-    tw   = bbox[2] - bbox[0]
-    x    = (width - tw) // 2
-    y    = int(height * 0.28)
+    line_h  = font_size + 24
+    total_h = len(lines) * line_h
+    y_start = int(height * 0.30) - total_h // 2
 
-    # Shadow đậm
-    for dx, dy in [(-4,0),(4,0),(0,-4),(0,4),(-4,-4),(4,-4),(-4,4),(4,4),
-                   (-2,-2),(2,-2),(-2,2),(2,2)]:
-        draw.text((x+dx, y+dy), line, font=font_hook, fill=(0, 0, 0, 255))
+    # Đo chiều rộng thật của từng dòng để vẽ pill đúng kích thước
+    line_widths = []
+    for line in lines:
+        try:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            line_widths.append(bbox[2] - bbox[0])
+        except Exception:
+            line_widths.append(len(line) * 38)
 
-    # Chữ vàng Montserrat
-    draw.text((x, y), line, font=font_hook, fill=(255, 215, 0, 255))
+    pad_x, pad_y = 44, 20
+    block_w = max(line_widths) + pad_x * 2
+    block_h = total_h + pad_y * 2
+    block_x = (width - block_w) // 2
+    block_y = y_start - pad_y
+
+    # Nền pill đen mờ
+    draw.rounded_rectangle(
+        [block_x, block_y, block_x + block_w, block_y + block_h],
+        radius=28,
+        fill=(0, 0, 0, 140)
+    )
+
+    for i, line in enumerate(lines):
+        x = (width - line_widths[i]) // 2
+        y = y_start + i * line_h
+
+        # Shadow 16 lớp cực đậm
+        for dx, dy in [
+            (-6,0),(6,0),(0,-6),(0,6),
+            (-6,-6),(6,-6),(-6,6),(6,6),
+            (-4,-4),(4,-4),(-4,4),(4,4),
+            (-3,0),(3,0),(0,-3),(0,3),
+        ]:
+            draw.text((x+dx, y+dy), line, font=font, fill=(0, 0, 0, 255))
+
+        # Chữ vàng đậm
+        draw.text((x, y), line, font=font, fill=(255, 215, 0, 255))
 
     img.save(hook_img, "PNG")
 
@@ -246,7 +334,9 @@ def _add_hook_overlay(video_path: str, hook_text: str, output: str):
     ], capture_output=True, text=True)
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
+
     if result.returncode != 0:
+        print(f"[VIDEO] Hook lỗi: {result.stderr[-200:]}")
         shutil.copy(video_path, output)
 
 
@@ -276,7 +366,6 @@ def build_video(
         else:
             final_audio = audio_path
 
-        # Ghép audio
         merged = os.path.join(temp_dir, "merged.mp4")
         subprocess.run([
             "ffmpeg", "-y",
@@ -289,23 +378,19 @@ def build_video(
             merged
         ], check=True, capture_output=True)
 
-        # Hook overlay (3 giây đầu)
+        # Hook overlay 3 giây đầu
         after_hook = os.path.join(temp_dir, "after_hook.mp4")
         if script:
-            hook_text = script.split('.')[0].strip()
-            if hook_text:
-                try:
-                    _add_hook_overlay(merged, hook_text, after_hook)
-                    print(f"[VIDEO] Hook OK: {hook_text[:50]}...")
-                except Exception as e:
-                    print(f"[VIDEO] Hook lỗi (bỏ qua): {e}")
-                    shutil.copy(merged, after_hook)
-            else:
+            try:
+                _add_hook_overlay(merged, script, after_hook)
+                print(f"[VIDEO] Hook OK: {script[:50]}...")
+            except Exception as e:
+                print(f"[VIDEO] Hook lỗi (bỏ qua): {e}")
                 shutil.copy(merged, after_hook)
         else:
             shutil.copy(merged, after_hook)
 
-        # Logo suốt video — góc trên trái
+        # Logo góc trên trái
         if logo_path and os.path.exists(logo_path):
             print(f"[VIDEO] Thêm logo: {logo_path}")
             _add_logo(after_hook, logo_path, output_path)

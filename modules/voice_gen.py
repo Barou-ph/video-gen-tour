@@ -103,7 +103,7 @@ def text_to_speech(
             path1 = output_path.replace(".mp3", "_p1.mp3")
             path2 = output_path.replace(".mp3", "_p2.mp3")
             _fpt_request(part1, path1, fpt_key, voice, speed)
-            time.sleep(1)
+            time.sleep(3)
             _fpt_request(part2, path2, fpt_key, voice, speed)
             _concat_audio(path1, path2, output_path)
     else:
@@ -113,7 +113,6 @@ def text_to_speech(
 
 
 def _fpt_request(text: str, output_path: str, api_key: str, voice: str, speed: str):
-    """Gửi 1 đoạn text lên FPT và download audio về."""
     response = requests.post(
         "https://api.fpt.ai/hmi/tts/v5",
         headers={"api-key": api_key, "voice": voice, "speed": speed},
@@ -125,21 +124,26 @@ def _fpt_request(text: str, output_path: str, api_key: str, voice: str, speed: s
         raise RuntimeError(f"FPT TTS lỗi: {data}")
 
     audio_url = data["async"]
-    print(f"[TTS] FPT link: {audio_url}")
+    print(f"[TTS] Link: {audio_url}")
 
-    for attempt in range(30):
-        time.sleep(2.5)
+    # Poll lần đầu sau 3 giây
+    time.sleep(3)
+    for attempt in range(40):
         try:
             r = requests.get(audio_url, timeout=15)
-            if r.status_code == 200 and len(r.content) > 1000:
+            # File âm thanh thật sự sẽ có kích thước lớn (> 2KB), lỗi hoặc xử lý thường có dạng JSON/XML dung lượng nhỏ
+            if r.status_code == 200 and len(r.content) > 2000:
                 with open(output_path, "wb") as f:
                     f.write(r.content)
                 print(f"[TTS] OK lần {attempt+1} — {len(r.content)//1024}KB")
                 return
+            status_desc = f"status={r.status_code}, size={len(r.content)}B"
+            print(f"[TTS] Chờ... lần {attempt+1} ({status_desc})")
         except Exception as e:
-            print(f"[TTS] Lỗi lần {attempt+1}: {e}")
+            print(f"[TTS] Request lỗi lần {attempt+1}: {e}")
+        time.sleep(3)
 
-    raise RuntimeError("FPT TTS timeout sau 75s.")
+    raise RuntimeError("FPT TTS timeout sau 120s. Vui lòng kiểm tra lại kết nối mạng hoặc thử lại sau ít phút.")
 
 
 def _concat_audio(path1: str, path2: str, output: str):

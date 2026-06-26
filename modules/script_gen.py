@@ -87,25 +87,32 @@ CHỈ trả về JSON, không markdown."""
         return {"tour_name": "", "price": "", "highlights": tour_raw, "description": ""}
 
 def generate_hook(tour_raw: str) -> str:
-    """Sinh 1 câu hook ngắn gọn tối đa 8 từ cho overlay video."""
-    prompt = f"""Từ thông tin tour sau, viết đúng 1 câu hook cực ngắn (tối đa 8 từ) 
-bằng tiếng Việt để hiển thị 3 giây đầu video TikTok.
+    """Sinh 1 câu hook cực kỳ thu hút, tò mò, không chứa số thô, mượt mà (tối đa 8-10 từ) theo style TikTok Travel Vlog."""
+    prompt = f"""Bạn là một TikTok Creator triệu view chuyên sáng tạo vlog du lịch phong cách cinematic/đời sống.
+Hãy viết đúng 1 câu hook (tiêu đề hiển thị 3 giây đầu) cực kỳ cuốn hút, mượt mà và tự nhiên về chuyến du lịch dưới đây.
 
-THÔNG TIN:
+THÔNG TIN TOUR:
 {tour_raw}
 
-YÊU CẦU:
-- Tối đa 8 từ, không dấu chấm cuối
-- Gây tò mò hoặc cảm xúc mạnh ngay lập tức
-- Không dùng emoji, ký tự đặc biệt
-- Ví dụ tốt: "Đà Lạt đang gọi tên bạn" / "3 ngày 2 đêm chỉ từ 2 triệu 9"
+YÊU CẦU CỦA CÂU HOOK:
+1. Độ dài: Tối đa 8-10 từ, viết gọn trên 1 dòng.
+2. Tuyệt đối KHÔNG DÙNG SỐ THÔ (như 3, 2, 2.9, 2tr9, 3N2Đ, 2.490.000, 2 triệu rưỡi, chỉ 2 triệu 4).
+3. Văn phong: Sử dụng phong cách tự sự (POV), câu hỏi gợi mở hoặc gợi cảm xúc mượt mà của vlog du lịch xịn.
+   - Ví dụ tốt: 
+     + "POV: Bạn quyết định đi trốn nóng Đà Lạt"
+     + "Đà Lạt mùa này đẹp bình yên đến lạ"
+     + "Góc bình yên nhất bạn phải ghé ở Đà Lạt"
+     + "Chuyến trốn nóng lý tưởng nhất mùa hè này"
+     + "Lý do bạn phải xách balo đi Đà Lạt ngay"
+     + "Đà Lạt đang gọi tên bạn"
+4. Định dạng: Không dùng emoji, không ký tự đặc biệt, không viết dấu chấm ở cuối câu.
 
-CHỈ trả về câu hook, không giải thích."""
+CHỈ trả về duy nhất 1 câu hook tiếng Việt, không giải thích gì thêm."""
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.9,
-        max_tokens=30,
+        max_tokens=40,
     )
     return response.choices[0].message.content.strip().strip('."\'')

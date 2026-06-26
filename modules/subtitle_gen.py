@@ -153,7 +153,7 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str) -> str:
             if cur:
                 lines.append(cur)
 
-            line_h  = 54
+            line_h  = 66
             total_h = len(lines) * line_h
             y_cur   = int(height * 0.84) - total_h // 2
 
@@ -164,20 +164,20 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str) -> str:
                 x    = (width - tw) // 2
                 pad  = 12
 
-                # Nền mờ sau chữ
+                # Nền mờ sau chữ bo góc hiện đại
                 overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
                 ov_draw = ImageDraw.Draw(overlay)
-                ov_draw.rectangle(
-                    [x-pad, y_cur-pad//2, x+tw+pad, y_cur+th+pad//2],
+                ov_draw.rounded_rectangle(
+                    [x - pad, y_cur - pad // 2, x + tw + pad, y_cur + th + pad // 2],
+                    radius=8,
                     fill=(0, 0, 0, 140)
                 )
-                img   = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-                draw  = ImageDraw.Draw(img)
+                img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+                draw = ImageDraw.Draw(img)
 
-                # Viền đen + chữ trắng
-                for dx, dy in [(-2,0),(2,0),(0,-2),(0,2)]:
-                    draw.text((x+dx, y_cur+dy), line, font=font, fill=(0, 0, 0))
-                draw.text((x, y_cur), line, font=font, fill=(255, 255, 255))
+                # Chữ trắng với viền đen mịn đẹp bằng tính năng native của Pillow
+                draw.text((x, y_cur), line, font=font, fill=(255, 255, 255),
+                          stroke_width=3, stroke_fill=(0, 0, 0))
                 y_cur += line_h
 
             img.save(fpath, "JPEG", quality=95)
