@@ -64,7 +64,7 @@ def text_to_speech(
     output_path: str,
     rate: str = "+0%",
     volume: str = "+0%",
-    voice: str = "lannhi",
+    voice: str = "linhsan",
     speed: str = "1",
 ) -> str:
     fpt_key = os.getenv("FPT_API_KEY")

@@ -107,10 +107,16 @@ Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
     with st.expander("⚙️ Tuỳ chỉnh nâng cao"):
         col1, col2 = st.columns(2)
         with col1:
+            # Tìm index của linhsan trong VOICES để set làm mặc định
+            voice_keys = list(VOICES.keys())
+            default_voice_idx = next(
+                (i for i, k in enumerate(voice_keys) if "linhsan" in k),
+                0  # fallback về index 0 nếu không tìm thấy
+            )
             voice_label = st.selectbox(
                 "Giọng đọc",
-                options=list(VOICES.keys()),
-                index=0,
+                options=voice_keys,
+                index=default_voice_idx,
             )
         with col2:
             fpt_speed = st.select_slider(
