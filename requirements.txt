@@ -3,6 +3,6 @@ openai>=1.0.0
 requests>=2.31.0
 Pillow>=10.0.0
 python-dotenv>=1.0.0
-openai-whisper>=20231117
 pysrt>=1.1.2
 moviepy>=1.0.3
+ffmpeg-python>=0.2.0
