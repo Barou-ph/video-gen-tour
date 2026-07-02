@@ -89,7 +89,40 @@ def _get_font(size: int):
         return ImageFont.load_default()
 
 
-def burn_subtitles(video_path: str, srt_path: str, output_path: str) -> str:
+def _draw_search_bar(img, width, height):
+    from PIL import ImageDraw, Image
+    
+    sb_w = 640
+    sb_h = 74
+    sb_x = (width - sb_w) // 2
+    sb_y = 100
+    
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ov_draw = ImageDraw.Draw(overlay)
+    ov_draw.rounded_rectangle(
+        [sb_x, sb_y, sb_x + sb_w, sb_y + sb_h],
+        radius=37,
+        fill=(255, 255, 255, 45),  # semi-transparent white
+        outline=(255, 255, 255, 80),
+        width=1
+    )
+    
+    font_sb = _get_font(32)
+    
+    text_x = sb_x + 40
+    text_y = sb_y + (sb_h - 32) // 2 - 4
+    ov_draw.text((text_x, text_y), "Tìm kiếm", font=font_sb, fill=(255, 255, 255, 200))
+    
+    icon_x = sb_x + sb_w - 60
+    icon_y = sb_y + sb_h // 2
+    r = 10
+    ov_draw.ellipse([icon_x - r, icon_y - r, icon_x + r, icon_y + r], outline=(255, 255, 255, 200), width=3)
+    ov_draw.line([icon_x + 7, icon_y + 7, icon_x + 16, icon_y + 16], fill=(255, 255, 255, 200), width=3)
+    
+    img.paste(Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB"))
+
+
+def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_style: str = "Badge (Khung chữ Vàng/Đỏ)", show_search_bar: bool = True) -> str:
     """Burn subtitle vào video dùng Pillow + FFmpeg."""
     import tempfile, shutil, json
     from PIL import Image, ImageDraw
@@ -119,8 +152,8 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str) -> str:
             os.path.join(frames_dir, "frame_%06d.jpg")
         ], check=True, capture_output=True)
 
-        font   = _get_font(54)   # tăng từ 46/52 lên 54
-        line_h = 66              # tăng line height theo
+        font   = _get_font(54)
+        line_h = 66
         frame_files = sorted(os.listdir(frames_dir))
         print(f"[SUB] Vẽ subtitle lên {len(frame_files)} frames...")
 
@@ -132,53 +165,83 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str) -> str:
                     sub_text = sub.text.strip()
                     break
 
-            if not sub_text:
+            if not sub_text and not show_search_bar:
                 continue
 
             fpath = os.path.join(frames_dir, fname)
             img   = Image.open(fpath).convert("RGB")
+            
+            if show_search_bar:
+                _draw_search_bar(img, width, height)
+                
             draw  = ImageDraw.Draw(img)
 
-            # Wrap text
-            max_w = int(width * 0.85)
-            words, lines, cur = sub_text.split(), [], ""
-            for word in words:
-                test = (cur + " " + word).strip()
-                bbox = draw.textbbox((0, 0), test, font=font)
-                if bbox[2] - bbox[0] > max_w and cur:
+            if sub_text:
+                max_w = int(width * 0.85)
+                words, lines, cur = sub_text.split(), [], ""
+                for word in words:
+                    test = (cur + " " + word).strip()
+                    bbox = draw.textbbox((0, 0), test, font=font)
+                    if bbox[2] - bbox[0] > max_w and cur:
+                        lines.append(cur)
+                        cur = word
+                    else:
+                        cur = test
+                if cur:
                     lines.append(cur)
-                    cur = word
+
+                line_h  = 66
+                total_h = len(lines) * line_h
+                y_cur   = int(height * 0.84) - total_h // 2
+
+                if "Badge" in subtitle_style:
+                    for line_idx, line in enumerate(lines):
+                        bbox = draw.textbbox((0, 0), line, font=font)
+                        tw   = bbox[2] - bbox[0]
+                        th   = bbox[3] - bbox[1]
+                        x    = (width - tw) // 2
+                        pad_x = 24
+                        pad_y = 12
+
+                        # Alternating colors: even -> yellow, odd -> red
+                        if line_idx % 2 == 0:
+                            bg_color = (229, 184, 44, 255) # E5B82C
+                        else:
+                            bg_color = (196, 28, 36, 255) # C41C24
+
+                        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                        ov_draw = ImageDraw.Draw(overlay)
+                        ov_draw.rounded_rectangle(
+                            [x - pad_x, y_cur - pad_y, x + tw + pad_x, y_cur + th + pad_y],
+                            radius=12,
+                            fill=bg_color
+                        )
+                        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+                        draw = ImageDraw.Draw(img)
+
+                        draw.text((x, y_cur), line, font=font, fill=(255, 255, 255))
+                        y_cur += line_h
                 else:
-                    cur = test
-            if cur:
-                lines.append(cur)
+                    for line in lines:
+                        bbox = draw.textbbox((0, 0), line, font=font)
+                        tw   = bbox[2] - bbox[0]
+                        th   = bbox[3] - bbox[1]
+                        x    = (width - tw) // 2
+                        pad  = 12
 
-            line_h  = 66
-            total_h = len(lines) * line_h
-            y_cur   = int(height * 0.84) - total_h // 2
+                        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                        ov_draw = ImageDraw.Draw(overlay)
+                        ov_draw.rounded_rectangle(
+                            [x - pad, y_cur - pad // 2, x + tw + pad, y_cur + th + pad // 2],
+                            radius=8,
+                            fill=(0, 0, 0, 140)
+                        )
+                        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+                        draw = ImageDraw.Draw(img)
 
-            for line in lines:
-                bbox = draw.textbbox((0, 0), line, font=font)
-                tw   = bbox[2] - bbox[0]
-                th   = bbox[3] - bbox[1]
-                x    = (width - tw) // 2
-                pad  = 12
-
-                # Nền mờ sau chữ bo góc hiện đại
-                overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-                ov_draw = ImageDraw.Draw(overlay)
-                ov_draw.rounded_rectangle(
-                    [x - pad, y_cur - pad // 2, x + tw + pad, y_cur + th + pad // 2],
-                    radius=8,
-                    fill=(0, 0, 0, 140)
-                )
-                img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-                draw = ImageDraw.Draw(img)
-
-                # Chữ trắng với viền đen mịn đẹp bằng tính năng native của Pillow
-                draw.text((x, y_cur), line, font=font, fill=(255, 255, 255),
-                          stroke_width=3, stroke_fill=(0, 0, 0))
-                y_cur += line_h
+                        draw.text((x, y_cur), line, font=font, fill=(255, 255, 255),
+                                  stroke_width=3, stroke_fill=(0, 0, 0))
+                        y_cur += line_h
 
             img.save(fpath, "JPEG", quality=95)
 

@@ -135,7 +135,53 @@ Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
             type=["mp3"],
             help="Tự động giảm xuống 15% volume",
         )
-        add_subtitle = st.checkbox("Burn subtitle vào video", value=True)
+        
+        st.divider()
+        st.subheader("🎨 Giao diện & Hiệu ứng")
+        
+        col_ui1, col_ui2 = st.columns(2)
+        with col_ui1:
+            subtitle_style = st.selectbox(
+                "Kiểu Subtitle",
+                options=["Badge (Khung chữ Vàng/Đỏ)", "Standard (Nền đen mờ)"],
+                index=0
+            )
+            filter_mode = st.selectbox(
+                "Bộ lọc hình ảnh",
+                options=[
+                    "Gốc (Không lọc)",
+                    "Ấm áp / Lung linh (Golden / Warm)",
+                    "Huyền bí / Lạnh (Mysterious / Cool)",
+                    "Cổ điển (Vintage / Retro)",
+                    "Rực rỡ (Vibrant / Cinematic)"
+                ],
+                index=0
+            )
+        with col_ui2:
+            transition_type = st.selectbox(
+                "Hiệu ứng chuyển cảnh",
+                options=["fade", "slideleft", "slideright", "slideup", "slidedown", "circlecrop", "zoomin"],
+                format_func=lambda x: {
+                    "fade": "Mờ dần (fade)",
+                    "slideleft": "Trượt trái (slideleft)",
+                    "slideright": "Trượt phải (slideright)",
+                    "slideup": "Trượt lên (slideup)",
+                    "slidedown": "Trượt xuống (slidedown)",
+                    "circlecrop": "Vòng tròn (circlecrop)",
+                    "zoomin": "Thu phóng (zoomin)"
+                }[x],
+                index=0
+            )
+            
+        col_ui3, col_ui4, col_ui5 = st.columns(3)
+        with col_ui3:
+            add_subtitle = st.checkbox("Burn subtitle vào video", value=True)
+        with col_ui4:
+            show_search_bar = st.checkbox("Thanh Tìm kiếm ở đầu", value=True)
+        with col_ui5:
+            use_chimes = st.checkbox("Tiếng cling cling chữ chạy", value=True)
+            
+        show_ending = st.checkbox("Thêm màn hình kết thúc (CTA Follow)", value=True)
 
     submitted = st.form_submit_button(
         "🚀 Tạo Video", use_container_width=True, type="primary"
@@ -214,10 +260,19 @@ if submitted:
         audio_path = os.path.join(temp_dir, "voice.mp3")
         text_to_speech(script, audio_path, voice=voice_id, speed=fpt_speed)
 
-        # Bước 4: Ghép video
+        # Bước 4: Tạo subtitle trước (nếu cần dùng cho hiệu ứng cling cling hoặc burn sub)
+        srt_path = None
+        if add_subtitle or use_chimes:
+            with status:
+                st.write("📝 Đang tạo subtitle từ script...")
+            progress.progress(50)
+            srt_path = os.path.join(temp_dir, "subtitle.srt")
+            generate_subtitles(audio_path, srt_path, script=script)
+
+        # Bước 5: Ghép video + chuyển cảnh + chèn hook + chèn tiếng chimes
         with status:
             st.write("🎬 Đang ghép video + chuyển cảnh + chèn hook...")
-        progress.progress(55)
+        progress.progress(65)
 
         logo_path = "assets/logo.png" if os.path.exists("assets/logo.png") else None
         draft_video = os.path.join(temp_dir, "draft.mp4")
@@ -229,10 +284,15 @@ if submitted:
             output_path=draft_video,
             logo_path=logo_path,
             bg_music_path=bg_music_path,
-            script=hook,  
+            script=hook,
+            transition_type=transition_type,
+            filter_mode=filter_mode,
+            show_ending=show_ending,
+            use_chimes=use_chimes,
+            srt_path=srt_path,
         )
 
-        # Bước 5: Subtitle
+        # Bước 6: Burn Subtitle
         final_video = os.path.join(
             "output", f"{slugify(tour_raw[:30])}_{int(time.time())}.mp4"
         )
@@ -240,17 +300,16 @@ if submitted:
 
         if add_subtitle:
             with status:
-                st.write("📝 Đang tạo subtitle từ script...")
-            progress.progress(75)
-
-            srt_path = os.path.join(temp_dir, "subtitle.srt")
-            generate_subtitles(audio_path, srt_path, script=script)
-
-            with status:
                 st.write("🔥 Đang burn subtitle vào video...")
-            progress.progress(88)
+            progress.progress(85)
 
-            burn_subtitles(draft_video, srt_path, final_video)
+            burn_subtitles(
+                draft_video, 
+                srt_path, 
+                final_video, 
+                subtitle_style=subtitle_style, 
+                show_search_bar=show_search_bar
+            )
             srt_final = final_video.replace(".mp4", ".srt")
             shutil.copy(srt_path, srt_final)
         else:
