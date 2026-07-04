@@ -26,6 +26,20 @@ def _crop_to_916(img: Image.Image) -> Image.Image:
     return img
 
 
+def _get_ffmpeg_filter_str(mode: str) -> str:
+    if not mode:
+        return ""
+    if "Ấm áp" in mode or "Golden" in mode or "Warm" in mode:
+        return "eq=contrast=1.05:saturation=1.2:brightness=0.02,colorbalance=rm=0.08:gm=0.02:bm=-0.06:rh=0.05:bh=-0.05"
+    elif "Huyền bí" in mode or "Mysterious" in mode or "Cool" in mode:
+        return "eq=contrast=1.1:brightness=-0.02:saturation=0.95,colorbalance=rm=-0.05:bm=0.1:rh=-0.05:bh=0.05"
+    elif "Cổ điển" in mode or "Vintage" in mode or "Retro" in mode:
+        return "eq=contrast=0.95:brightness=0.02:saturation=0.9,colorbalance=rm=0.05:gm=-0.02:bm=-0.05"
+    elif "Rực rỡ" in mode or "Vibrant" in mode or "Cinematic" in mode:
+        return "eq=contrast=1.12:saturation=1.35"
+    return ""
+
+
 def _process_image(path: str, out_path: str):
     img = Image.open(path)
     if img.mode in ("RGBA", "P", "LA"):
@@ -41,24 +55,9 @@ def _process_image(path: str, out_path: str):
     img.save(out_path, "JPEG", quality=95)
 
 
-def _get_ffmpeg_filter_str(mode: str) -> str:
-    if not mode:
-        return ""
-    if "Ấm áp" in mode or "Golden" in mode or "Warm" in mode:
-        return "eq=contrast=1.05:saturation=1.2:brightness=0.02,colorbalance=rm=0.08:gm=0.02:bm=-0.06:rh=0.05:bh=-0.05"
-    elif "Huyền bí" in mode or "Mysterious" in mode or "Cool" in mode:
-        return "eq=contrast=1.1:brightness=-0.02:saturation=0.95,colorbalance=rm=-0.05:bm=0.1:rh=-0.05:bh=0.05"
-    elif "Cổ điển" in mode or "Vintage" in mode or "Retro" in mode:
-        return "eq=contrast=0.95:brightness=0.02:saturation=0.9,colorbalance=rm=0.05:gm=-0.02:bm=-0.05"
-    elif "Rực rỡ" in mode or "Vibrant" in mode or "Cinematic" in mode:
-        return "eq=contrast=1.12:saturation=1.35"
-    return ""
-
-
 def _process_video_clip(path: str, out_path: str, clip_duration: float = 4.0, filter_mode: str = None):
     src_duration = _get_duration(path)
     use_duration = min(src_duration, clip_duration)
-    
     vf_filters = [
         "scale=1080:1920:force_original_aspect_ratio=increase",
         "crop=1080:1920",
@@ -67,7 +66,6 @@ def _process_video_clip(path: str, out_path: str, clip_duration: float = 4.0, fi
     filter_str = _get_ffmpeg_filter_str(filter_mode)
     if filter_str:
         vf_filters.append(filter_str)
-        
     subprocess.run([
         "ffmpeg", "-y", "-i", path,
         "-t", str(use_duration),
@@ -85,16 +83,13 @@ def _prepare_media(media_paths: list, temp_dir: str, audio_duration: float, filt
 
     n = len(media_paths)
     fade = 0.4
-    
-    # First pass: identify video files and process them to get actual clip durations
+    est_duration_each = (audio_duration + (n - 1) * fade) / n
+    clip_max = min(est_duration_each, 6.0)
+
     temp_items = []
     video_durations = []
     num_images = 0
-    
-    # Est default duration each
-    est_duration_each = (audio_duration + (n - 1) * fade) / n
-    clip_max = min(est_duration_each, 6.0)
-    
+
     for i, path in enumerate(media_paths):
         ext = path.lower().rsplit(".", 1)[-1]
         is_video = ext in ("mp4", "mov", "avi", "mkv", "webm")
@@ -106,13 +101,11 @@ def _prepare_media(media_paths: list, temp_dir: str, audio_duration: float, filt
         else:
             temp_items.append({"path": None, "duration": 0.0, "is_video": False, "index": i, "orig_path": path})
             num_images += 1
-            
-    # Calculate duration for images to exactly compensate and fill remaining time
-    # total_main_duration = sum(video_durations) + num_images * duration_image - (n - 1) * fade = audio_duration
+
     if num_images > 0:
         total_video_dur = sum(video_durations)
         duration_image = (audio_duration + (n - 1) * fade - total_video_dur) / num_images
-        duration_image = max(2.5, duration_image)  # keep a safe minimum duration of 2.5s
+        duration_image = max(2.5, duration_image)
     else:
         duration_image = 3.0
 
@@ -143,7 +136,6 @@ def _build_concat_with_xfade(items: list, temp_dir: str, output: str, transition
             filter_str = _get_ffmpeg_filter_str(filter_mode)
             if filter_str:
                 vf_filters.append(filter_str)
-                
             subprocess.run([
                 "ffmpeg", "-y",
                 "-loop", "1", "-i", item["path"],
@@ -185,113 +177,82 @@ def _build_concat_with_xfade(items: list, temp_dir: str, output: str, transition
 
 
 def _generate_chime_sound_effect(filepath: str):
-    import math
-    import struct
-    import wave
-    import os
-
+    import math, struct, wave
     if os.path.exists(filepath):
         try:
             os.remove(filepath)
         except Exception:
             pass
-
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     sample_rate = 44100
-    duration = 0.12  # short punchy duration
+    duration    = 0.12
     num_samples = int(sample_rate * duration)
-    
     with wave.open(filepath, 'w') as wav_file:
-        wav_file.setnchannels(1)  # Mono
-        wav_file.setsampwidth(2)   # 16-bit
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
         wav_file.setframerate(sample_rate)
-        
         for i in range(num_samples):
-            t = i / sample_rate
-            
-            # The body pop sound: frequency sweeping from 800 Hz down to 100 Hz
-            # Integration of freq(t) = 800 - 700*(t/dur) is phase(t) = 2*pi*(800*t - 350*t^2/dur)
-            phase_pop = 2 * math.pi * (800 * t - 350 * (t ** 2) / duration)
-            decay_pop = math.exp(-25 * t)  # rapid decay
-            val_pop = math.sin(phase_pop) * decay_pop
-            
-            # The transient click sound: frequency sweeping from 3000 Hz down to 600 Hz very fast
-            # Integration of freq(t) = 3000 - 2400*(t/0.03) is phase(t) = 2*pi*(3000*t - 1200*t^2/0.03)
+            t          = i / sample_rate
+            phase_pop  = 2 * math.pi * (800 * t - 350 * (t ** 2) / duration)
+            decay_pop  = math.exp(-25 * t)
+            val_pop    = math.sin(phase_pop) * decay_pop
             if t < 0.03:
                 phase_click = 2 * math.pi * (3000 * t - 40000 * (t ** 2))
-                decay_click = math.exp(-150 * t)  # extremely rapid decay for click transient
-                val_click = math.sin(phase_click) * decay_click
+                decay_click = math.exp(-150 * t)
+                val_click   = math.sin(phase_click) * decay_click
             else:
                 val_click = 0.0
-                
-            # Combine body pop and transient click
-            val = 0.6 * val_pop + 0.4 * val_click
-            val = max(-1.0, min(1.0, val))
+            val    = max(-1.0, min(1.0, 0.6 * val_pop + 0.4 * val_click))
             sample = int(val * 32767)
             wav_file.writeframes(struct.pack('<h', sample))
 
 
-def _create_chime_track(timestamps: list[float], total_duration: float, chime_path: str, output_path: str):
-    import wave
-    import struct
-    
-    with wave.open(chime_path, 'r') as w_chime:
-        params = w_chime.getparams()
-        chime_frames = w_chime.readframes(params.nframes)
+def _create_chime_track(timestamps: list, total_duration: float, chime_path: str, output_path: str):
+    import wave, struct
+    with wave.open(chime_path, 'r') as w:
+        params        = w.getparams()
+        chime_frames  = w.readframes(params.nframes)
         chime_samples = list(struct.unpack(f"<{params.nframes}h", chime_frames))
-        
-    sample_rate = params.framerate
+    sample_rate   = params.framerate
     total_samples = int(total_duration * sample_rate)
     track_samples = [0] * total_samples
-    
     for t in timestamps:
-        start_sample = int(t * sample_rate)
-        # overlay chime
-        for idx, sample in enumerate(chime_samples):
-            target_idx = start_sample + idx
-            if target_idx < total_samples:
-                track_samples[target_idx] = max(-32768, min(32767, track_samples[target_idx] + sample))
-                
-    with wave.open(output_path, 'w') as w_out:
-        w_out.setparams(params)
-        w_out.writeframes(struct.pack(f"<{len(track_samples)}h", *track_samples))
+        start = int(t * sample_rate)
+        for idx, s in enumerate(chime_samples):
+            ti = start + idx
+            if ti < total_samples:
+                track_samples[ti] = max(-32768, min(32767, track_samples[ti] + s))
+    with wave.open(output_path, 'w') as w:
+        w.setparams(params)
+        w.writeframes(struct.pack(f"<{len(track_samples)}h", *track_samples))
 
 
-def _mix_audio(
-    voice_path: str,
-    music_path: str,
-    chimes_path: str,
-    voice_duration: float,
-    total_duration: float,
-    output: str
-):
-    inputs = ["-i", voice_path]
+def _mix_audio(voice_path, music_path, chimes_path, voice_duration, total_duration, output):
+    inputs        = ["-i", voice_path]
     filter_inputs = ["[0:a]volume=1.0[v]"]
-    mix_inputs = ["[v]"]
-    
+    mix_inputs    = ["[v]"]
+
     if music_path and os.path.exists(music_path):
         inputs += ["-stream_loop", "-1", "-i", music_path]
-        music_idx = len(inputs) // 2 - 1
-        filter_inputs += [f"[{music_idx}:a]volume=0.15,atrim=0:{total_duration}[music]"]
-        mix_inputs += ["[music]"]
-        
+        idx = len(inputs) // 2 - 1
+        filter_inputs.append(f"[{idx}:a]volume=0.15,atrim=0:{total_duration}[music]")
+        mix_inputs.append("[music]")
+
     if chimes_path and os.path.exists(chimes_path):
         inputs += ["-i", chimes_path]
-        chimes_idx = len(inputs) // 2 - 1
-        filter_inputs += [f"[{chimes_idx}:a]volume=0.6[chimes]"]
-        mix_inputs += ["[chimes]"]
-        
+        idx = len(inputs) // 2 - 1
+        filter_inputs.append(f"[{idx}:a]volume=0.6[chimes]")
+        mix_inputs.append("[chimes]")
+
     filter_complex = ";".join(filter_inputs)
-    num_inputs = len(mix_inputs)
-    
-    if num_inputs > 1:
-        mix_str = "".join(mix_inputs)
-        filter_complex += f";{mix_str}amix=inputs={num_inputs}:duration=longest:dropout_transition=0[aout]"
+    num = len(mix_inputs)
+    if num > 1:
+        filter_complex += f";{''.join(mix_inputs)}amix=inputs={num}:duration=longest:dropout_transition=0[aout]"
         map_arg = "[aout]"
     else:
-        filter_complex += f";[v]apad[aout]"
+        filter_complex += ";[v]apad[aout]"
         map_arg = "[aout]"
-        
+
     subprocess.run([
         "ffmpeg", "-y"
     ] + inputs + [
@@ -304,28 +265,19 @@ def _mix_audio(
 
 
 def _get_hook_font(size: int):
-    """
-    Load font cho hook text theo thứ tự ưu tiên:
-    1. Nunito-ExtraBold.ttf (tải thủ công vào assets/) — đẹp nhất
-    2. BeVietnamPro-Bold.ttf (tự tải)
-    3. Fallback Windows
-    """
     from PIL import ImageFont
     import requests
 
-    # Ưu tiên 1: Nunito ExtraBold — phải tải thủ công từ fonts.google.com
-    nunito = "assets/Nunito-ExtraBold.ttf"
-    if os.path.exists(nunito):
-        try:
-            return ImageFont.truetype(nunito, size)
-        except Exception:
-            pass
+    for path in ["assets/Nunito-ExtraBold.ttf", "assets/Nunito-Bold.ttf"]:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
 
-    # Ưu tiên 2: Be Vietnam Pro Bold — tự tải
     beviet = "assets/BeVietnamPro-Bold.ttf"
     if not os.path.exists(beviet):
         os.makedirs("assets", exist_ok=True)
-        print("[FONT] Tải Be Vietnam Pro Bold...")
         for url in [
             "https://github.com/letteratic/be-vietnam-pro/raw/master/fonts/ttf/BeVietnamPro-Bold.ttf",
             "https://github.com/googlefonts/BeVietnamPro/raw/main/fonts/ttf/BeVietnamPro-Bold.ttf",
@@ -335,7 +287,6 @@ def _get_hook_font(size: int):
                 if r.status_code == 200 and len(r.content) > 50000:
                     with open(beviet, "wb") as f:
                         f.write(r.content)
-                    print("[FONT] Be Vietnam Pro OK")
                     break
             except Exception:
                 continue
@@ -346,12 +297,7 @@ def _get_hook_font(size: int):
         except Exception:
             pass
 
-    # Fallback Windows — có hỗ trợ tiếng Việt
-    for fp in [
-        "C:/Windows/Fonts/segoeui.ttf",
-        "C:/Windows/Fonts/tahoma.ttf",
-        "C:/Windows/Fonts/arial.ttf",
-    ]:
+    for fp in ["C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/tahoma.ttf", "C:/Windows/Fonts/arial.ttf"]:
         if os.path.exists(fp):
             try:
                 return ImageFont.truetype(fp, size)
@@ -361,23 +307,35 @@ def _get_hook_font(size: int):
     return ImageFont.load_default()
 
 
+def _wrap_text(draw, text: str, font, max_w: int) -> list:
+    words, lines, cur = text.split(), [], ""
+    for word in words:
+        test = (cur + " " + word).strip()
+        try:
+            bbox = draw.textbbox((0, 0), test, font=font)
+            w    = bbox[2] - bbox[0]
+        except Exception:
+            w = len(test) * 36
+        if w > max_w and cur:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = test
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def _add_logo(video: str, logo: str, output: str, voice_duration: float = None):
-    """Logo góc trên trái, 300px, hiện suốt phần video chính."""
-    if voice_duration is not None:
-        overlay_filter = f"[0:v][logo]overlay=32:32:enable='between(t,0,{voice_duration})'"
-    else:
-        overlay_filter = "[0:v][logo]overlay=32:32"
-        
+    enable = f":enable='between(t,0,{voice_duration})'" if voice_duration else ""
     result = subprocess.run([
         "ffmpeg", "-y",
-        "-i", video,
-        "-i", logo,
+        "-i", video, "-i", logo,
         "-filter_complex",
-        f"[1:v]scale=300:-1[logo];{overlay_filter}",
+        f"[1:v]scale=300:-1[logo];[0:v][logo]overlay=32:32{enable}",
         "-c:a", "copy",
         output
     ], capture_output=True, text=True)
-
     if result.returncode != 0:
         print(f"[VIDEO] Logo lỗi (bỏ qua): {result.stderr[-200:]}")
         shutil.copy(video, output)
@@ -385,11 +343,11 @@ def _add_logo(video: str, logo: str, output: str, voice_duration: float = None):
 
 def _add_hook_overlay(video_path: str, hook_text: str, output: str):
     """
-    Hook text 3 giây đầu:
-    - Font Nunito ExtraBold (hoặc Be Vietnam Pro Bold)
-    - Size 82px, chữ vàng #FFD700
-    - Nền pill đen mờ ôm sát chữ
-    - Shadow 16 lớp cực đậm
+    Hook style TikTok Travel chuẩn:
+    - Dòng 1: nền đỏ (#C41C24) chữ trắng đậm — nhấn mạnh điểm chính
+    - Dòng 2+: chữ trắng shadow đen, KHÔNG nền — câu phụ
+    - Font lớn, spacing rộng, không chữ dính nhau
+    - Vị trí: 30% từ trên
     """
     from PIL import Image, ImageDraw
     import json
@@ -409,74 +367,100 @@ def _add_hook_overlay(video_path: str, hook_text: str, output: str):
     img  = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Gradient tối phía trên mạnh
-    for y in range(int(height * 0.50)):
-        alpha = int(200 * (1 - y / (height * 0.50)))
+    # Gradient tối nhẹ từ trên — giúp cả 2 dòng nổi
+    grad_h = int(height * 0.55)
+    for y in range(grad_h):
+        t     = y / grad_h
+        alpha = int(160 * (1 - t * t))
         draw.line([(0, y), (width, y)], fill=(0, 0, 0, alpha))
 
-    font_size = 82
-    font = _get_hook_font(font_size)
+    # Font lớn cho dòng 1 (highlight), nhỏ hơn cho dòng 2
+    font_size_1 = 88   # dòng highlight
+    font_size_2 = 72   # dòng phụ
+    font_1 = _get_hook_font(font_size_1)
+    font_2 = _get_hook_font(font_size_2)
 
-    # Wrap text tối đa 2 dòng
-    max_w = int(width * 0.84)
-    words, lines, cur = hook_text.split(), [], ""
-    for word in words:
-        test = (cur + " " + word).strip()
+    # Tách hook thành 2 phần:
+    # - Nếu có dấu ? hoặc ! → dòng 1 = phần trước dấu đó (kèm dấu), dòng 2 = phần còn lại
+    # - Nếu không → wrap bình thường, dòng 1 là highlight
+    import re
+    max_w_1 = int(width * 0.82)
+    max_w_2 = int(width * 0.86)
+
+    # Wrap dòng 1 — tối đa 1 dòng highlight
+    words   = hook_text.split()
+    line1   = ""
+    rest    = []
+    for i, word in enumerate(words):
+        test = (line1 + " " + word).strip()
         try:
-            bbox   = draw.textbbox((0, 0), test, font=font)
-            w_test = bbox[2] - bbox[0]
+            bbox = draw.textbbox((0, 0), test, font=font_1)
+            w    = bbox[2] - bbox[0]
         except Exception:
-            w_test = len(test) * 38
-        if w_test > max_w and cur:
-            lines.append(cur)
-            cur = word
-        else:
-            cur = test
-    if cur:
-        lines.append(cur)
-    lines = lines[:2]
+            w = len(test) * 40
+        if w > max_w_1 and line1:
+            rest = words[i:]
+            break
+        line1 = test
 
-    line_h  = font_size + 24
-    total_h = len(lines) * line_h
-    y_start = int(height * 0.30) - total_h // 2
+    # Wrap phần còn lại thành dòng 2
+    line2 = " ".join(rest).strip() if rest else ""
 
-    # Đo chiều rộng thật của từng dòng để vẽ pill đúng kích thước
-    line_widths = []
-    for line in lines:
-        try:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            line_widths.append(bbox[2] - bbox[0])
-        except Exception:
-            line_widths.append(len(line) * 38)
+    # ── Vẽ dòng 1: nền đỏ ─────────────────────────────────────────────────────
+    try:
+        bbox1 = draw.textbbox((0, 0), line1, font=font_1)
+        tw1   = bbox1[2] - bbox1[0]
+        th1   = bbox1[3] - bbox1[1]
+    except Exception:
+        tw1, th1 = len(line1) * 40, font_size_1
 
-    pad_x, pad_y = 44, 20
-    block_w = max(line_widths) + pad_x * 2
-    block_h = total_h + pad_y * 2
-    block_x = (width - block_w) // 2
-    block_y = y_start - pad_y
+    pad_x1, pad_y1 = 36, 18
+    box_w1 = tw1 + pad_x1 * 2
+    box_h1 = th1 + pad_y1 * 2
+    box_x1 = (width - box_w1) // 2
 
-    # Nền pill đen mờ
+    # Vị trí bắt đầu: 28% từ trên
+    y_line1 = int(height * 0.28)
+    box_y1  = y_line1
+
+    # Nền đỏ bo góc nhẹ
     draw.rounded_rectangle(
-        [block_x, block_y, block_x + block_w, block_y + block_h],
-        radius=28,
-        fill=(0, 0, 0, 140)
+        [box_x1, box_y1, box_x1 + box_w1, box_y1 + box_h1],
+        radius=12,
+        fill=(196, 28, 36, 245)   # đỏ đậm
     )
 
-    for i, line in enumerate(lines):
-        x = (width - line_widths[i]) // 2
-        y = y_start + i * line_h
+    # Chữ trắng đậm trên nền đỏ
+    draw.text(
+        (box_x1 + pad_x1, box_y1 + pad_y1),
+        line1, font=font_1, fill=(255, 255, 255, 255)
+    )
 
-        # Shadow 16 lớp cực đậm
-        for dx, dy in [
-            (-6,0),(6,0),(0,-6),(0,6),
-            (-6,-6),(6,-6),(-6,6),(6,6),
-            (-4,-4),(4,-4),(-4,4),(4,4),
-            (-3,0),(3,0),(0,-3),(0,3),
-        ]:
-            draw.text((x+dx, y+dy), line, font=font, fill=(0, 0, 0, 255))
+    # ── Vẽ dòng 2: chữ trắng shadow, KHÔNG nền ────────────────────────────────
+    if line2:
+        # Wrap dòng 2 nếu cần tối đa 2 dòng con
+        lines2 = _wrap_text(draw, line2, font_2, max_w_2)[:2]
 
-        # Chữ vàng đậm
-        draw.text((x, y), line, font=font, fill=(255, 215, 0, 255))
+        line_h2 = font_size_2 + 20
+        # Cách dòng 1 một khoảng rõ ràng
+        y_line2 = box_y1 + box_h1 + 24
+
+        for sub_line in lines2:
+            try:
+                bbox2 = draw.textbbox((0, 0), sub_line, font=font_2)
+                tw2   = bbox2[2] - bbox2[0]
+            except Exception:
+                tw2 = len(sub_line) * 34
+            x2 = (width - tw2) // 2
+
+            # Shadow đen cực dày
+            for d in range(1, 6):
+                for dx, dy in [(d,0),(-d,0),(0,d),(0,-d),(d,d),(-d,d),(d,-d),(-d,-d)]:
+                    draw.text((x2+dx, y_line2+dy), sub_line, font=font_2, fill=(0, 0, 0, 255))
+
+            # Chữ trắng
+            draw.text((x2, y_line2), sub_line, font=font_2, fill=(255, 255, 255, 255))
+            y_line2 += line_h2
 
     img.save(hook_img, "PNG")
 
@@ -492,129 +476,9 @@ def _add_hook_overlay(video_path: str, hook_text: str, output: str):
     ], capture_output=True, text=True)
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
-
     if result.returncode != 0:
         print(f"[VIDEO] Hook lỗi: {result.stderr[-200:]}")
         shutil.copy(video_path, output)
-
-
-def generate_ending_image(width: int, height: int, logo_path: str, output_path: str):
-    from PIL import Image, ImageDraw
-    import os
-    
-    # Create white canvas
-    img = Image.new("RGB", (width, height), (255, 255, 255))
-    draw = ImageDraw.Draw(img)
-    
-    # 1. Logo at the top
-    logo_y = 200
-    if logo_path and os.path.exists(logo_path):
-        try:
-            logo_img = Image.open(logo_path)
-            logo_w = 400
-            # Keep aspect ratio
-            logo_h = int(logo_img.height * (logo_w / logo_img.width))
-            logo_img = logo_img.resize((logo_w, logo_h), Image.LANCZOS)
-            
-            # If logo has alpha channel, paste with mask
-            if logo_img.mode in ("RGBA", "P", "LA"):
-                if logo_img.mode == "P":
-                    logo_img = logo_img.convert("RGBA")
-                img.paste(logo_img, ((width - logo_w) // 2, logo_y), mask=logo_img.split()[-1])
-            else:
-                img.paste(logo_img, ((width - logo_w) // 2, logo_y))
-            logo_y += logo_h + 120
-        except Exception as e:
-            print(f"[ENDING] Lỗi load logo: {e}")
-            logo_y += 200
-    else:
-        logo_y += 200
-        
-    # 2. "follow" button
-    btn_w = 450
-    btn_h = 130
-    btn_x = (width - btn_w) // 2
-    btn_y = logo_y
-    
-    draw.rounded_rectangle(
-        [btn_x, btn_y, btn_x + btn_w, btn_y + btn_h],
-        radius=45,
-        fill=(230, 159, 36) # E69F24
-    )
-    
-    # Text "follow" in red
-    font_follow = _get_hook_font(60)
-    try:
-        bbox = draw.textbbox((0, 0), "follow", font=font_follow)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-    except Exception:
-        tw, th = 200, 60
-    
-    draw.text(
-        (btn_x + (btn_w - tw) // 2, btn_y + (btn_h - th) // 2 - 8),
-        "follow",
-        font=font_follow,
-        fill=(196, 28, 36) # red
-    )
-    
-    # Draw arrow / cursor clicking on follow button
-    arrow_x = btn_x + 90
-    arrow_y = btn_y - 60
-    draw.polygon(
-        [(arrow_x, arrow_y), (arrow_x + 35, arrow_y + 15), (arrow_x + 15, arrow_y + 35)],
-        fill=(0, 0, 0)
-    )
-    draw.line(
-        [(arrow_x - 10, arrow_y - 10), (arrow_x + 15, arrow_y + 15)],
-        fill=(0, 0, 0),
-        width=8
-    )
-    
-    # 3. Text: "để cập nhật những thông tin\nDU LỊCH HOT NHẤT!!!"
-    text_y = btn_y + btn_h + 100
-    font_text = _get_hook_font(42)
-    lines = [
-        "để cập nhật những thông tin",
-        "DU LỊCH HOT NHẤT!!!"
-    ]
-    
-    for line in lines:
-        try:
-            bbox = draw.textbbox((0, 0), line, font=font_text)
-            tw = bbox[2] - bbox[0]
-        except Exception:
-            tw = len(line) * 20
-        color = (196, 28, 36) if "HOT NHẤT" in line else (128, 20, 24)
-        draw.text(
-            ((width - tw) // 2, text_y),
-            line,
-            font=font_text,
-            fill=color
-        )
-        text_y += 75
-        
-    # 4. Illustration at the bottom
-    ill_path = "assets/ending_illustration.png"
-    if os.path.exists(ill_path):
-        try:
-            ill_img = Image.open(ill_path)
-            ill_w = 900
-            ill_h = int(ill_img.height * (ill_w / ill_img.width))
-            ill_img = ill_img.resize((ill_w, ill_h), Image.LANCZOS)
-            ill_y = height - ill_h - 120
-            
-            if ill_img.mode in ("RGBA", "P", "LA"):
-                if ill_img.mode == "P":
-                    ill_img = ill_img.convert("RGBA")
-                img.paste(ill_img, ((width - ill_w) // 2, ill_y), mask=ill_img.split()[-1])
-            else:
-                img.paste(ill_img, ((width - ill_w) // 2, ill_y))
-        except Exception as e:
-            print(f"[ENDING] Lỗi load minh họa: {e}")
-            
-    img.save(output_path, "JPEG", quality=95)
-
 
 def build_video(
     media_paths: list[str],
@@ -630,20 +494,23 @@ def build_video(
     srt_path: str = None,
 ) -> str:
 
+
     temp_dir = tempfile.mkdtemp()
+
 
     try:
         audio_duration = _get_duration(audio_path)
         total_duration = audio_duration + 3.0 if show_ending else audio_duration
         print(f"[VIDEO] Audio: {audio_duration:.1f}s (Total: {total_duration:.1f}s) | {len(media_paths)} media files")
 
+
         items = _prepare_media(media_paths, temp_dir, audio_duration, filter_mode=filter_mode)
-        
+       
         if show_ending:
             ending_img_path = os.path.join(temp_dir, "ending_screen.jpg")
             generate_ending_image(1080, 1920, logo_path, ending_img_path)
             items.append({"path": ending_img_path, "duration": 3.4, "is_video": False})
-            
+           
             # Adjust ending screen duration to match total_duration exactly and prevent looping
             silent_dur = sum(item["duration"] for item in items) - (len(items) - 1) * 0.4
             if silent_dur < total_duration:
@@ -651,8 +518,10 @@ def build_video(
                 items[-1]["duration"] += diff
                 print(f"[VIDEO] Adjusting ending screen duration by +{diff:.2f}s to match total_duration exactly")
 
+
         silent_video = os.path.join(temp_dir, "silent.mp4")
         _build_concat_with_xfade(items, temp_dir, silent_video, transition_type=transition_type, filter_mode=filter_mode)
+
 
         chimes_track = None
         if use_chimes and srt_path and os.path.exists(srt_path):
@@ -660,15 +529,16 @@ def build_video(
             try:
                 chime_wav = "assets/chime.wav"
                 _generate_chime_sound_effect(chime_wav)
-                
+               
                 subs = pysrt.open(srt_path, encoding="utf-8")
                 timestamps = [sub.start.ordinal / 1000.0 for sub in subs]
-                
+               
                 chimes_track = os.path.join(temp_dir, "chimes_track.wav")
                 _create_chime_track(timestamps, audio_duration, chime_wav, chimes_track)
                 print(f"[AUDIO] Chime track OK: {len(timestamps)} dings")
             except Exception as e:
                 print(f"[AUDIO] Lỗi tạo chime track: {e}")
+
 
         final_audio = os.path.join(temp_dir, "final_audio.mp3")
         _mix_audio(
@@ -679,6 +549,7 @@ def build_video(
             total_duration=total_duration,
             output=final_audio
         )
+
 
         merged = os.path.join(temp_dir, "merged.mp4")
         subprocess.run([
@@ -692,6 +563,7 @@ def build_video(
             merged
         ], check=True, capture_output=True)
 
+
         after_hook = os.path.join(temp_dir, "after_hook.mp4")
         if script:
             try:
@@ -703,16 +575,20 @@ def build_video(
         else:
             shutil.copy(merged, after_hook)
 
+
         if logo_path and os.path.exists(logo_path):
             print(f"[VIDEO] Thêm logo: {logo_path}")
             _add_logo(after_hook, logo_path, output_path, voice_duration=audio_duration if show_ending else None)
         else:
             shutil.copy(after_hook, output_path)
 
+
         print(f"[VIDEO] Done → {output_path} ({_get_duration(output_path):.1f}s)")
+
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
 
     return output_path
     #yeye
