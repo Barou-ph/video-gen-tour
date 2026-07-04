@@ -2,7 +2,7 @@ import subprocess
 import os
 import shutil
 import tempfile
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def _get_duration(path: str) -> float:
@@ -479,6 +479,42 @@ def _add_hook_overlay(video_path: str, hook_text: str, output: str):
     if result.returncode != 0:
         print(f"[VIDEO] Hook lỗi: {result.stderr[-200:]}")
         shutil.copy(video_path, output)
+
+def generate_ending_image(width, height, logo_path, output_path):
+    """
+    Tạo một bức ảnh nền đen 9:16 và chèn logo doanh nghiệp vào chính giữa làm outro.
+    """
+    print(f"[IMAGE] Đang tạo ảnh outro kết thúc ({width}x{height}) với logo...")
+    # 1. Tạo nền đen (hoặc xám đậm #111111)
+    bg_color = (17, 17, 17) 
+    ending_img = Image.new("RGB", (width, height), color=bg_color)
+    
+    # 2. Nếu có logo, chèn logo vào giữa
+    if logo_path and os.path.exists(logo_path):
+        try:
+            logo = Image.open(logo_path).convert("RGBA")
+            
+            # Tính toán kích thước logo sao cho vừa vặn (ví dụ: chiều ngang chiếm tối đa 40% chiều ngang video)
+            max_logo_width = int(width * 0.4)
+            logo_ratio = logo.width / logo.height
+            new_logo_width = min(logo.width, max_logo_width)
+            new_logo_height = int(new_logo_width / logo_ratio)
+            logo = logo.resize((new_logo_width, new_logo_height), Image.Resampling.LANCZOS)
+            
+            # Tính tọa độ chính giữa để paste logo vào
+            position = (
+                (width - logo.width) // 2,
+                (height - logo.height) // 2
+            )
+            
+            # Sử dụng chính kênh alpha của logo làm mặt nạ để giữ độ trong suốt
+            ending_img.paste(logo, position, logo)
+        except Exception as e:
+            print(f"[⚠️ Warning] Không thể chèn logo vào ảnh outro: {e}. Sẽ dùng nền đen trơn.")
+            
+    # 3. Lưu ảnh
+    ending_img.save(output_path)
+    print(f"[SUCCESS] Đã tạo xong ảnh outro tạm thời tại: {output_path}")
 
 def build_video(
     media_paths: list[str],

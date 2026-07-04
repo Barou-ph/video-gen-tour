@@ -177,7 +177,7 @@ Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
         with col_ui3:
             add_subtitle = st.checkbox("Burn subtitle vào video", value=True)
         with col_ui4:
-            show_search_bar = st.checkbox("Thanh Tìm kiếm ở đầu", value=True)
+            show_search_bar = st.checkbox("Thanh Tìm kiếm ở đầu", value=False)
         with col_ui5:
             use_chimes = st.checkbox("Tiếng cling cling chữ chạy", value=True)
             
