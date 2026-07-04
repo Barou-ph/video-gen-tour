@@ -84,24 +84,48 @@ def _prepare_media(media_paths: list, temp_dir: str, audio_duration: float, filt
         raise ValueError("Cần ít nhất 1 ảnh hoặc video!")
 
     n = len(media_paths)
-    duration_each = max(3.0, (audio_duration + 1.0) / n)
-    clip_max = min(duration_each, 6.0)
-
-    result = []
+    fade = 0.4
+    
+    # First pass: identify video files and process them to get actual clip durations
+    temp_items = []
+    video_durations = []
+    num_images = 0
+    
+    # Est default duration each
+    est_duration_each = (audio_duration + (n - 1) * fade) / n
+    clip_max = min(est_duration_each, 6.0)
+    
     for i, path in enumerate(media_paths):
         ext = path.lower().rsplit(".", 1)[-1]
         is_video = ext in ("mp4", "mov", "avi", "mkv", "webm")
-
         if is_video:
             out_path = os.path.join(temp_dir, f"clip_{i:03d}.mp4")
             actual_dur = _process_video_clip(path, out_path, clip_duration=clip_max, filter_mode=filter_mode)
-            result.append({"path": out_path, "duration": actual_dur, "is_video": True})
-            print(f"[VIDEO] Clip {i+1}: {actual_dur:.1f}s ← {os.path.basename(path)}")
+            temp_items.append({"path": out_path, "duration": actual_dur, "is_video": True, "index": i, "orig_path": path})
+            video_durations.append(actual_dur)
         else:
-            out_path = os.path.join(temp_dir, f"frame_{i:03d}.jpg")
-            _process_image(path, out_path)
-            result.append({"path": out_path, "duration": duration_each, "is_video": False})
-            print(f"[VIDEO] Ảnh {i+1}: {duration_each:.1f}s ← {os.path.basename(path)}")
+            temp_items.append({"path": None, "duration": 0.0, "is_video": False, "index": i, "orig_path": path})
+            num_images += 1
+            
+    # Calculate duration for images to exactly compensate and fill remaining time
+    # total_main_duration = sum(video_durations) + num_images * duration_image - (n - 1) * fade = audio_duration
+    if num_images > 0:
+        total_video_dur = sum(video_durations)
+        duration_image = (audio_duration + (n - 1) * fade - total_video_dur) / num_images
+        duration_image = max(2.5, duration_image)  # keep a safe minimum duration of 2.5s
+    else:
+        duration_image = 3.0
+
+    result = []
+    for item in temp_items:
+        if item["is_video"]:
+            result.append({"path": item["path"], "duration": item["duration"], "is_video": True})
+            print(f"[VIDEO] Clip {item['index']+1}: {item['duration']:.1f}s ← {os.path.basename(item['orig_path'])}")
+        else:
+            out_path = os.path.join(temp_dir, f"frame_{item['index']:03d}.jpg")
+            _process_image(item["orig_path"], out_path)
+            result.append({"path": out_path, "duration": duration_image, "is_video": False})
+            print(f"[VIDEO] Ảnh {item['index']+1}: {duration_image:.1f}s ← {os.path.basename(item['orig_path'])}")
 
     return result
 
@@ -167,11 +191,14 @@ def _generate_chime_sound_effect(filepath: str):
     import os
 
     if os.path.exists(filepath):
-        return
+        try:
+            os.remove(filepath)
+        except Exception:
+            pass
 
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     sample_rate = 44100
-    duration = 0.35  # seconds
+    duration = 0.12  # short punchy duration
     num_samples = int(sample_rate * duration)
     
     with wave.open(filepath, 'w') as wav_file:
@@ -179,17 +206,26 @@ def _generate_chime_sound_effect(filepath: str):
         wav_file.setsampwidth(2)   # 16-bit
         wav_file.setframerate(sample_rate)
         
-        # Crystal chime frequency 1500Hz with 3000Hz, 4500Hz overtones
         for i in range(num_samples):
             t = i / sample_rate
-            decay = math.exp(-12 * t)  # quick fade-out
             
-            val = (
-                0.6 * math.sin(2 * math.pi * 1500 * t) +
-                0.3 * math.sin(2 * math.pi * 3000 * t) +
-                0.1 * math.sin(2 * math.pi * 4500 * t)
-            ) * decay
+            # The body pop sound: frequency sweeping from 800 Hz down to 100 Hz
+            # Integration of freq(t) = 800 - 700*(t/dur) is phase(t) = 2*pi*(800*t - 350*t^2/dur)
+            phase_pop = 2 * math.pi * (800 * t - 350 * (t ** 2) / duration)
+            decay_pop = math.exp(-25 * t)  # rapid decay
+            val_pop = math.sin(phase_pop) * decay_pop
             
+            # The transient click sound: frequency sweeping from 3000 Hz down to 600 Hz very fast
+            # Integration of freq(t) = 3000 - 2400*(t/0.03) is phase(t) = 2*pi*(3000*t - 1200*t^2/0.03)
+            if t < 0.03:
+                phase_click = 2 * math.pi * (3000 * t - 40000 * (t ** 2))
+                decay_click = math.exp(-150 * t)  # extremely rapid decay for click transient
+                val_click = math.sin(phase_click) * decay_click
+            else:
+                val_click = 0.0
+                
+            # Combine body pop and transient click
+            val = 0.6 * val_pop + 0.4 * val_click
             val = max(-1.0, min(1.0, val))
             sample = int(val * 32767)
             wav_file.writeframes(struct.pack('<h', sample))
@@ -607,6 +643,13 @@ def build_video(
             ending_img_path = os.path.join(temp_dir, "ending_screen.jpg")
             generate_ending_image(1080, 1920, logo_path, ending_img_path)
             items.append({"path": ending_img_path, "duration": 3.4, "is_video": False})
+            
+            # Adjust ending screen duration to match total_duration exactly and prevent looping
+            silent_dur = sum(item["duration"] for item in items) - (len(items) - 1) * 0.4
+            if silent_dur < total_duration:
+                diff = total_duration - silent_dur
+                items[-1]["duration"] += diff
+                print(f"[VIDEO] Adjusting ending screen duration by +{diff:.2f}s to match total_duration exactly")
 
         silent_video = os.path.join(temp_dir, "silent.mp4")
         _build_concat_with_xfade(items, temp_dir, silent_video, transition_type=transition_type, filter_mode=filter_mode)
@@ -672,3 +715,4 @@ def build_video(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     return output_path
+    #yeye
