@@ -18,7 +18,7 @@ cleanup_old_outputs()
 cleanup_old_temps()
 
 
-def slugify(text: str) -> str:
+def slugify(text: str) -> str: 
     text = unicodedata.normalize("NFKD", text)
     text = "".join(c for c in text if not unicodedata.combining(c))
     text = re.sub(r"[^\w\s-]", "", text).strip()
@@ -173,12 +173,10 @@ Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
                 index=0
             )
             
-        col_ui3, col_ui4, col_ui5 = st.columns(3)
+        col_ui3, col_ui4 = st.columns(2)
         with col_ui3:
             add_subtitle = st.checkbox("Burn subtitle vào video", value=True)
         with col_ui4:
-            show_search_bar = st.checkbox("Thanh Tìm kiếm ở đầu", value=False)
-        with col_ui5:
             use_chimes = st.checkbox("Tiếng cling cling chữ chạy", value=True)
             
         show_ending = st.checkbox("Thêm màn hình kết thúc (CTA Follow)", value=True)
@@ -304,11 +302,10 @@ if submitted:
             progress.progress(85)
 
             burn_subtitles(
-                draft_video, 
-                srt_path, 
-                final_video, 
-                subtitle_style=subtitle_style, 
-                show_search_bar=show_search_bar
+                draft_video,
+                srt_path,
+                final_video,
+                subtitle_style=subtitle_style,
             )
             srt_final = final_video.replace(".mp4", ".srt")
             shutil.copy(srt_path, srt_final)
