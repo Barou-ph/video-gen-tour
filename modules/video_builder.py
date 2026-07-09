@@ -264,66 +264,35 @@ def _mix_audio(voice_path, music_path, chimes_path, voice_duration, total_durati
     ], check=True, capture_output=True)
 
 
-def _get_hook_font(size: int):
-    from PIL import ImageFont
-    import requests
+def generate_ending_image(width, height, logo_path, output_path):
+    """
+    Tạo một bức ảnh nền đen 9:16 và chèn logo doanh nghiệp vào chính giữa làm outro.
+    """
+    print(f"[IMAGE] Đang tạo ảnh outro kết thúc ({width}x{height}) với logo...")
+    bg_color = (17, 17, 17)
+    ending_img = Image.new("RGB", (width, height), color=bg_color)
 
-    for path in ["assets/Nunito-ExtraBold.ttf", "assets/Nunito-Bold.ttf"]:
-        if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, size)
-            except Exception:
-                pass
-
-    beviet = "assets/BeVietnamPro-Bold.ttf"
-    if not os.path.exists(beviet):
-        os.makedirs("assets", exist_ok=True)
-        for url in [
-            "https://github.com/letteratic/be-vietnam-pro/raw/master/fonts/ttf/BeVietnamPro-Bold.ttf",
-            "https://github.com/googlefonts/BeVietnamPro/raw/main/fonts/ttf/BeVietnamPro-Bold.ttf",
-        ]:
-            try:
-                r = requests.get(url, timeout=20)
-                if r.status_code == 200 and len(r.content) > 50000:
-                    with open(beviet, "wb") as f:
-                        f.write(r.content)
-                    break
-            except Exception:
-                continue
-
-    if os.path.exists(beviet):
+    if logo_path and os.path.exists(logo_path):
         try:
-            return ImageFont.truetype(beviet, size)
-        except Exception:
-            pass
+            logo = Image.open(logo_path).convert("RGBA")
 
-    for fp in ["C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/tahoma.ttf", "C:/Windows/Fonts/arial.ttf"]:
-        if os.path.exists(fp):
-            try:
-                return ImageFont.truetype(fp, size)
-            except Exception:
-                continue
+            max_logo_width = int(width * 0.4)
+            logo_ratio = logo.width / logo.height
+            new_logo_width = min(logo.width, max_logo_width)
+            new_logo_height = int(new_logo_width / logo_ratio)
+            logo = logo.resize((new_logo_width, new_logo_height), Image.Resampling.LANCZOS)
 
-    return ImageFont.load_default()
+            position = (
+                (width - logo.width) // 2,
+                (height - logo.height) // 2
+            )
 
+            ending_img.paste(logo, position, logo)
+        except Exception as e:
+            print(f"[⚠️ Warning] Không thể chèn logo vào ảnh outro: {e}. Sẽ dùng nền đen trơn.")
 
-def _wrap_text(draw, text: str, font, max_w: int) -> list:
-    words, lines, cur = text.split(), [], ""
-    for word in words:
-        test = (cur + " " + word).strip()
-        try:
-            bbox = draw.textbbox((0, 0), test, font=font)
-            w    = bbox[2] - bbox[0]
-        except Exception:
-            w = len(test) * 36
-        if w > max_w and cur:
-            lines.append(cur)
-            cur = word
-        else:
-            cur = test
-    if cur:
-        lines.append(cur)
-    return lines
+    ending_img.save(output_path)
+    print(f"[SUCCESS] Đã tạo xong ảnh outro tạm thời tại: {output_path}")
 
 
 def _add_logo(video: str, logo: str, output: str, voice_duration: float = None):
@@ -341,188 +310,12 @@ def _add_logo(video: str, logo: str, output: str, voice_duration: float = None):
         shutil.copy(video, output)
 
 
-def _add_hook_overlay(video_path: str, hook_text: str, output: str):
-    """
-    Hook style TikTok Travel chuẩn:
-    - Dòng 1: nền đỏ (#C41C24) chữ trắng đậm — nhấn mạnh điểm chính
-    - Dòng 2+: chữ trắng shadow đen, KHÔNG nền — câu phụ
-    - Font lớn, spacing rộng, không chữ dính nhau
-    - Vị trí: 30% từ trên
-    """
-    from PIL import Image, ImageDraw
-    import json
-
-    probe = subprocess.run([
-        "ffprobe", "-v", "quiet", "-print_format", "json",
-        "-show_streams", video_path
-    ], capture_output=True, text=True)
-    info   = json.loads(probe.stdout)
-    vs     = next(s for s in info["streams"] if s["codec_type"] == "video")
-    width  = int(vs["width"])
-    height = int(vs["height"])
-
-    tmp_dir  = tempfile.mkdtemp()
-    hook_img = os.path.join(tmp_dir, "hook.png")
-
-    img  = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    # Gradient tối nhẹ từ trên — giúp cả 2 dòng nổi
-    grad_h = int(height * 0.55)
-    for y in range(grad_h):
-        t     = y / grad_h
-        alpha = int(160 * (1 - t * t))
-        draw.line([(0, y), (width, y)], fill=(0, 0, 0, alpha))
-
-    # Font lớn cho dòng 1 (highlight), nhỏ hơn cho dòng 2
-    font_size_1 = 88   # dòng highlight
-    font_size_2 = 72   # dòng phụ
-    font_1 = _get_hook_font(font_size_1)
-    font_2 = _get_hook_font(font_size_2)
-
-    # Tách hook thành 2 phần:
-    # - Nếu có dấu ? hoặc ! → dòng 1 = phần trước dấu đó (kèm dấu), dòng 2 = phần còn lại
-    # - Nếu không → wrap bình thường, dòng 1 là highlight
-    import re
-    max_w_1 = int(width * 0.82)
-    max_w_2 = int(width * 0.86)
-
-    # Wrap dòng 1 — tối đa 1 dòng highlight
-    words   = hook_text.split()
-    line1   = ""
-    rest    = []
-    for i, word in enumerate(words):
-        test = (line1 + " " + word).strip()
-        try:
-            bbox = draw.textbbox((0, 0), test, font=font_1)
-            w    = bbox[2] - bbox[0]
-        except Exception:
-            w = len(test) * 40
-        if w > max_w_1 and line1:
-            rest = words[i:]
-            break
-        line1 = test
-
-    # Wrap phần còn lại thành dòng 2
-    line2 = " ".join(rest).strip() if rest else ""
-
-    # ── Vẽ dòng 1: nền đỏ ─────────────────────────────────────────────────────
-    try:
-        bbox1 = draw.textbbox((0, 0), line1, font=font_1)
-        tw1   = bbox1[2] - bbox1[0]
-        th1   = bbox1[3] - bbox1[1]
-    except Exception:
-        tw1, th1 = len(line1) * 40, font_size_1
-
-    pad_x1, pad_y1 = 36, 18
-    box_w1 = tw1 + pad_x1 * 2
-    box_h1 = th1 + pad_y1 * 2
-    box_x1 = (width - box_w1) // 2
-
-    # Vị trí bắt đầu: 28% từ trên
-    y_line1 = int(height * 0.28)
-    box_y1  = y_line1
-
-    # Nền đỏ bo góc nhẹ
-    draw.rounded_rectangle(
-        [box_x1, box_y1, box_x1 + box_w1, box_y1 + box_h1],
-        radius=12,
-        fill=(196, 28, 36, 245)   # đỏ đậm
-    )
-
-    # Chữ trắng đậm trên nền đỏ
-    draw.text(
-        (box_x1 + pad_x1, box_y1 + pad_y1),
-        line1, font=font_1, fill=(255, 255, 255, 255)
-    )
-
-    # ── Vẽ dòng 2: chữ trắng shadow, KHÔNG nền ────────────────────────────────
-    if line2:
-        # Wrap dòng 2 nếu cần tối đa 2 dòng con
-        lines2 = _wrap_text(draw, line2, font_2, max_w_2)[:2]
-
-        line_h2 = font_size_2 + 20
-        # Cách dòng 1 một khoảng rõ ràng
-        y_line2 = box_y1 + box_h1 + 24
-
-        for sub_line in lines2:
-            try:
-                bbox2 = draw.textbbox((0, 0), sub_line, font=font_2)
-                tw2   = bbox2[2] - bbox2[0]
-            except Exception:
-                tw2 = len(sub_line) * 34
-            x2 = (width - tw2) // 2
-
-            # Shadow đen cực dày
-            for d in range(1, 6):
-                for dx, dy in [(d,0),(-d,0),(0,d),(0,-d),(d,d),(-d,d),(d,-d),(-d,-d)]:
-                    draw.text((x2+dx, y_line2+dy), sub_line, font=font_2, fill=(0, 0, 0, 255))
-
-            # Chữ trắng
-            draw.text((x2, y_line2), sub_line, font=font_2, fill=(255, 255, 255, 255))
-            y_line2 += line_h2
-
-    img.save(hook_img, "PNG")
-
-    result = subprocess.run([
-        "ffmpeg", "-y",
-        "-i", video_path, "-i", hook_img,
-        "-filter_complex",
-        "[0:v][1:v]overlay=0:0:enable='between(t,0,3)'[v]",
-        "-map", "[v]", "-map", "0:a",
-        "-c:v", "libx264", "-preset", "fast",
-        "-c:a", "copy", "-pix_fmt", "yuv420p",
-        output
-    ], capture_output=True, text=True)
-
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-    if result.returncode != 0:
-        print(f"[VIDEO] Hook lỗi: {result.stderr[-200:]}")
-        shutil.copy(video_path, output)
-
-def generate_ending_image(width, height, logo_path, output_path):
-    """
-    Tạo một bức ảnh nền đen 9:16 và chèn logo doanh nghiệp vào chính giữa làm outro.
-    """
-    print(f"[IMAGE] Đang tạo ảnh outro kết thúc ({width}x{height}) với logo...")
-    # 1. Tạo nền đen (hoặc xám đậm #111111)
-    bg_color = (17, 17, 17) 
-    ending_img = Image.new("RGB", (width, height), color=bg_color)
-    
-    # 2. Nếu có logo, chèn logo vào giữa
-    if logo_path and os.path.exists(logo_path):
-        try:
-            logo = Image.open(logo_path).convert("RGBA")
-            
-            # Tính toán kích thước logo sao cho vừa vặn (ví dụ: chiều ngang chiếm tối đa 40% chiều ngang video)
-            max_logo_width = int(width * 0.4)
-            logo_ratio = logo.width / logo.height
-            new_logo_width = min(logo.width, max_logo_width)
-            new_logo_height = int(new_logo_width / logo_ratio)
-            logo = logo.resize((new_logo_width, new_logo_height), Image.Resampling.LANCZOS)
-            
-            # Tính tọa độ chính giữa để paste logo vào
-            position = (
-                (width - logo.width) // 2,
-                (height - logo.height) // 2
-            )
-            
-            # Sử dụng chính kênh alpha của logo làm mặt nạ để giữ độ trong suốt
-            ending_img.paste(logo, position, logo)
-        except Exception as e:
-            print(f"[⚠️ Warning] Không thể chèn logo vào ảnh outro: {e}. Sẽ dùng nền đen trơn.")
-            
-    # 3. Lưu ảnh
-    ending_img.save(output_path)
-    print(f"[SUCCESS] Đã tạo xong ảnh outro tạm thời tại: {output_path}")
-
 def build_video(
     media_paths: list[str],
     audio_path: str,
     output_path: str,
     logo_path: str = None,
     bg_music_path: str = None,
-    script: str = None,
     transition_type: str = "fade",
     filter_mode: str = "Gốc (Không lọc)",
     show_ending: bool = True,
@@ -530,34 +323,28 @@ def build_video(
     srt_path: str = None,
 ) -> str:
 
-
     temp_dir = tempfile.mkdtemp()
-
 
     try:
         audio_duration = _get_duration(audio_path)
         total_duration = audio_duration + 3.0 if show_ending else audio_duration
         print(f"[VIDEO] Audio: {audio_duration:.1f}s (Total: {total_duration:.1f}s) | {len(media_paths)} media files")
 
-
         items = _prepare_media(media_paths, temp_dir, audio_duration, filter_mode=filter_mode)
-       
+
         if show_ending:
             ending_img_path = os.path.join(temp_dir, "ending_screen.jpg")
             generate_ending_image(1080, 1920, logo_path, ending_img_path)
             items.append({"path": ending_img_path, "duration": 3.4, "is_video": False})
-           
-            # Adjust ending screen duration to match total_duration exactly and prevent looping
+
             silent_dur = sum(item["duration"] for item in items) - (len(items) - 1) * 0.4
             if silent_dur < total_duration:
                 diff = total_duration - silent_dur
                 items[-1]["duration"] += diff
                 print(f"[VIDEO] Adjusting ending screen duration by +{diff:.2f}s to match total_duration exactly")
 
-
         silent_video = os.path.join(temp_dir, "silent.mp4")
         _build_concat_with_xfade(items, temp_dir, silent_video, transition_type=transition_type, filter_mode=filter_mode)
-
 
         chimes_track = None
         if use_chimes and srt_path and os.path.exists(srt_path):
@@ -565,16 +352,15 @@ def build_video(
             try:
                 chime_wav = "assets/chime.wav"
                 _generate_chime_sound_effect(chime_wav)
-               
+
                 subs = pysrt.open(srt_path, encoding="utf-8")
                 timestamps = [sub.start.ordinal / 1000.0 for sub in subs]
-               
+
                 chimes_track = os.path.join(temp_dir, "chimes_track.wav")
                 _create_chime_track(timestamps, audio_duration, chime_wav, chimes_track)
                 print(f"[AUDIO] Chime track OK: {len(timestamps)} dings")
             except Exception as e:
                 print(f"[AUDIO] Lỗi tạo chime track: {e}")
-
 
         final_audio = os.path.join(temp_dir, "final_audio.mp3")
         _mix_audio(
@@ -585,7 +371,6 @@ def build_video(
             total_duration=total_duration,
             output=final_audio
         )
-
 
         merged = os.path.join(temp_dir, "merged.mp4")
         subprocess.run([
@@ -599,32 +384,15 @@ def build_video(
             merged
         ], check=True, capture_output=True)
 
-
-        after_hook = os.path.join(temp_dir, "after_hook.mp4")
-        if script:
-            try:
-                _add_hook_overlay(merged, script, after_hook)
-                print(f"[VIDEO] Hook OK: {script[:50]}...")
-            except Exception as e:
-                print(f"[VIDEO] Hook lỗi (bỏ qua): {e}")
-                shutil.copy(merged, after_hook)
-        else:
-            shutil.copy(merged, after_hook)
-
-
         if logo_path and os.path.exists(logo_path):
             print(f"[VIDEO] Thêm logo: {logo_path}")
-            _add_logo(after_hook, logo_path, output_path, voice_duration=audio_duration if show_ending else None)
+            _add_logo(merged, logo_path, output_path, voice_duration=audio_duration if show_ending else None)
         else:
-            shutil.copy(after_hook, output_path)
-
+            shutil.copy(merged, output_path)
 
         print(f"[VIDEO] Done → {output_path} ({_get_duration(output_path):.1f}s)")
-
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-
     return output_path
-    #yeye
