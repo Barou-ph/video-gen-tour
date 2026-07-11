@@ -40,15 +40,16 @@ with st.sidebar:
         "OpenAI API Key", type="password",
         value=os.getenv("OPENAI_API_KEY", ""), placeholder="sk-...",
     )
-    fpt_key = st.text_input(
-        "FPT AI Key", type="password",
-        value=os.getenv("FPT_API_KEY", ""), placeholder="Dán key FPT vào đây",
+    viettel_key = st.text_input(
+        "Viettel AI Key", type="password",
+        value=os.getenv("VIETTEL_API_KEY", ""),
+        placeholder="Dán key Viettel AI vào đây",
     )
 
     if openai_key:
         os.environ["OPENAI_API_KEY"] = openai_key
-    if fpt_key:
-        os.environ["FPT_API_KEY"] = fpt_key
+    if viettel_key:
+        os.environ["VIETTEL_API_KEY"] = viettel_key
 
     st.divider()
 
@@ -59,10 +60,10 @@ with st.sidebar:
         else:
             st.error("OpenAI ❌")
     with col_s2:
-        if os.getenv("FPT_API_KEY"):
-            st.success("FPT ✅")
+        if os.getenv("VIETTEL_API_KEY"):
+            st.success("Viettel AI ✅")
         else:
-            st.error("FPT ❌")
+            st.error("Viettel AI ❌")
 
     st.divider()
     st.subheader("📖 Hướng dẫn")
@@ -75,7 +76,7 @@ with st.sidebar:
 💡 Để keys tự load, tạo file `.env`:
 OPENAI_API_KEY=sk-...
 
-FPT_API_KEY=...
+VIETTEL_API_KEY=...
     """)
 
 # ─── Main UI ──────────────────────────────────────────────────────────────────
@@ -119,7 +120,7 @@ Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
                 index=default_voice_idx,
             )
         with col2:
-            fpt_speed = st.select_slider(
+            viettel_speed = st.select_slider(
                 "Tốc độ giọng đọc",
                 options=["0", "1", "2"],
                 value="1",
@@ -196,8 +197,8 @@ if submitted:
     if not os.getenv("OPENAI_API_KEY"):
         st.error("Chưa nhập OpenAI API Key! Nhập vào sidebar bên trái.")
         st.stop()
-    if not os.getenv("FPT_API_KEY"):
-        st.error("Chưa nhập FPT AI Key! Nhập vào sidebar bên trái.")
+    if not os.getenv("VIETTEL_API_KEY"):
+        st.error("Chưa nhập Viettel AI Key! Nhập vào sidebar bên trái.")
         st.stop()
 
     for f in uploaded_files:
@@ -252,11 +253,11 @@ if submitted:
 
         # Bước 3: TTS (Chuyển văn bản thành giọng đọc)
         with status:
-            st.write(f"🎙️ FPT AI đang tạo giọng ({voice_label})...")
+            st.write(f"🎙️ VIETTEL AI đang tạo giọng ({voice_label})...")
         progress.progress(40)
 
         audio_path = os.path.join(temp_dir, "voice.mp3")
-        text_to_speech(script, audio_path, voice=voice_id, speed=fpt_speed)
+        text_to_speech(script, audio_path, voice=voice_id, speed=viettel_speed)
 
         # Bước 4: Tạo subtitle trước (nếu cần dùng cho hiệu ứng cling cling hoặc burn sub)
         srt_path = None
