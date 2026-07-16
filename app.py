@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from modules.voice_gen import text_to_speech, clean_script, VOICES
 from modules.script_gen import generate_script, parse_tour_info, generate_hook
 from modules.video_builder import build_video
-from modules.subtitle_gen import generate_subtitles, burn_subtitles
+from modules.subtitle_gen import generate_subtitles, burn_subtitles, SUBTITLE_STYLES
 from modules.utils import ensure_dirs, make_temp_dir, clean_temp, cleanup_old_outputs, cleanup_old_temps
 
 load_dotenv()
@@ -144,7 +144,7 @@ Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
         with col_ui1:
             subtitle_style = st.selectbox(
                 "Kiểu Subtitle",
-                options=["Badge (Khung chữ Vàng/Đỏ)", "Standard (Nền đen mờ)"],
+                options=SUBTITLE_STYLES,
                 index=0
             )
             filter_mode = st.selectbox(

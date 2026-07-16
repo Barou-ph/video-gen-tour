@@ -316,6 +316,7 @@ def build_video(
     output_path: str,
     logo_path: str = None,
     bg_music_path: str = None,
+    script: str = None,
     transition_type: str = "fade",
     filter_mode: str = "Gốc (Không lọc)",
     show_ending: bool = True,
@@ -384,11 +385,25 @@ def build_video(
             merged
         ], check=True, capture_output=True)
 
+        # Hook overlay 3 giây đầu
+        after_hook = os.path.join(temp_dir, "after_hook.mp4")
+        if script:
+            try:
+                _add_hook_overlay(merged, script, after_hook)
+                print(f"[VIDEO] Hook OK: {script[:50]}...")
+            except Exception as e:
+                print(f"[VIDEO] Hook lỗi (bỏ qua): {e}")
+                shutil.copy(merged, after_hook)
+        else:
+            shutil.copy(merged, after_hook)
+
+        # Logo góc trên trái
         if logo_path and os.path.exists(logo_path):
             print(f"[VIDEO] Thêm logo: {logo_path}")
-            _add_logo(merged, logo_path, output_path, voice_duration=audio_duration if show_ending else None)
+            _add_logo(after_hook, logo_path, output_path,
+                      voice_duration=audio_duration if show_ending else None)
         else:
-            shutil.copy(merged, output_path)
+            shutil.copy(after_hook, output_path)
 
         print(f"[VIDEO] Done → {output_path} ({_get_duration(output_path):.1f}s)")
 
