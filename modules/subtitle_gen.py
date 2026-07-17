@@ -99,6 +99,68 @@ SUBTITLE_STYLES = [
 ]
 
 
+def _wrap_natural(draw, text: str, font, max_w: int, min_words_per_line: int = 4) -> list:
+    """
+    Bọc dòng chữ sao cho mỗi dòng có TỐI THIỂU min_words_per_line từ,
+    tránh kiểu bọc tham lam (greedy) hay để lại 1 từ mồ côi ở dòng cuối
+    (ví dụ: "...khám phá" -> "khám" / "phá" trông rất vô duyên).
+    """
+    import math
+
+    words = text.split()
+    if len(words) <= min_words_per_line:
+        return [text] if text else []
+
+    def line_w(s):
+        bbox = draw.textbbox((0, 0), s, font=font)
+        return bbox[2] - bbox[0]
+
+    full_w = line_w(text)
+    if full_w <= max_w:
+        return [text]
+
+    num_lines = max(2, math.ceil(full_w / max_w))
+
+    while True:
+        target_w = full_w / num_lines * 1.08
+        lines, cur = [], ""
+        for word in words:
+            test = (cur + " " + word).strip()
+            if line_w(test) > target_w and cur:
+                lines.append(cur)
+                cur = word
+            else:
+                cur = test
+        if cur:
+            lines.append(cur)
+
+        fits = all(line_w(l) <= max_w for l in lines)
+        counts = [len(l.split()) for l in lines]
+        min_ok = min(counts) >= min_words_per_line or sum(counts) < min_words_per_line * 2
+
+        if fits and min_ok:
+            return lines
+
+        num_lines += 1
+        if num_lines >= len(words):
+            # Fallback: bọc tham lam theo max_w thật, rồi gộp dòng cuối
+            # vào dòng trước nếu vẫn còn quá ngắn (chặn mồ côi tuyệt đối)
+            lines, cur = [], ""
+            for word in words:
+                test = (cur + " " + word).strip()
+                if line_w(test) > max_w and cur:
+                    lines.append(cur)
+                    cur = word
+                else:
+                    cur = test
+            if cur:
+                lines.append(cur)
+            if len(lines) >= 2 and len(lines[-1].split()) < min_words_per_line:
+                lines[-2] = lines[-2] + " " + lines[-1]
+                lines.pop()
+            return lines
+
+
 def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_style: str = "Badge (Khung chữ Vàng/Đỏ)") -> str:
     """Burn subtitle vào video dùng Pillow + FFmpeg."""
     import tempfile, shutil, json
@@ -153,17 +215,7 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
             draw  = ImageDraw.Draw(img)
 
             max_w = int(width * 0.85)
-            words, lines, cur = sub_text.split(), [], ""
-            for word in words:
-                test = (cur + " " + word).strip()
-                bbox = draw.textbbox((0, 0), test, font=font)
-                if bbox[2] - bbox[0] > max_w and cur:
-                    lines.append(cur)
-                    cur = word
-                else:
-                    cur = test
-            if cur:
-                lines.append(cur)
+            lines = _wrap_natural(draw, sub_text, font, max_w, min_words_per_line=4)
 
             # Bề rộng khung dùng CHUNG cho mọi dòng trong cùng 1 subtitle
             # (theo dòng dài nhất) để các badge canh thẳng hàng, không lệch cỡ.
@@ -203,8 +255,11 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
                     draw = ImageDraw.Draw(img)
 
+                    # Căn giữa theo chiều cao THẬT của chữ (không dùng pad_y cứng)
+                    # để không bị lệch lên trên khi glyph cao/thấp khác nhau.
                     bbox = draw.textbbox((0, 0), line, font=font)
-                    text_y = y_cur + pad_y - bbox[1]
+                    real_h = bbox[3] - bbox[1]
+                    text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
                     draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255))
                     y_cur += line_h
 
@@ -224,7 +279,8 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     glow_color = neon_colors[line_idx % 2]
 
                     bbox = draw.textbbox((0, 0), line, font=font)
-                    text_y = y_cur - bbox[1]
+                    real_h = bbox[3] - bbox[1]
+                    text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
 
                     # Lớp glow: vẽ chữ màu neon mờ dần ra ngoài bằng blur, rồi chồng chữ trắng sắc nét lên trên
                     glow_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -247,25 +303,25 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                 box_h_each = ascent + descent
                 total_text_h = len(lines) * box_h_each + (len(lines) - 1) * line_gap
                 box_w = common_tw + pad_x * 2
-                box_h = total_text_h + pad_y * 2
+                box_h_full = total_text_h + pad_y * 2
                 x_box = (width - box_w) // 2
-                y_box = int(height * 0.84) - box_h // 2
+                y_box = int(height * 0.84) - box_h_full // 2
 
                 overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-                grad = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
+                grad = Image.new("RGBA", (box_w, box_h_full), (0, 0, 0, 0))
                 top_color = (124, 58, 237)     # tím
                 bottom_color = (236, 72, 153)  # hồng
-                for gy in range(box_h):
-                    t = gy / max(1, box_h - 1)
+                for gy in range(box_h_full):
+                    t = gy / max(1, box_h_full - 1)
                     r = int(top_color[0] + (bottom_color[0] - top_color[0]) * t)
                     g = int(top_color[1] + (bottom_color[1] - top_color[1]) * t)
                     b = int(top_color[2] + (bottom_color[2] - top_color[2]) * t)
                     for gx in range(box_w):
                         grad.putpixel((gx, gy), (r, g, b, 235))
 
-                mask = Image.new("L", (box_w, box_h), 0)
+                mask = Image.new("L", (box_w, box_h_full), 0)
                 mask_draw = ImageDraw.Draw(mask)
-                mask_draw.rounded_rectangle([0, 0, box_w, box_h], radius=16, fill=255)
+                mask_draw.rounded_rectangle([0, 0, box_w, box_h_full], radius=16, fill=255)
                 overlay.paste(grad, (x_box, y_box), mask)
 
                 img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
@@ -276,7 +332,8 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     tw = line_widths[line_idx]
                     text_x = x_box + (box_w - tw) // 2
                     bbox = draw.textbbox((0, 0), line, font=font)
-                    text_y = y_cur - bbox[1]
+                    real_h = bbox[3] - bbox[1]
+                    text_y = y_cur + (box_h_each - real_h) // 2 - bbox[1]
                     draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255))
                     y_cur += box_h_each + line_gap
 
@@ -292,7 +349,8 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     tw = line_widths[line_idx]
                     text_x = (width - tw) // 2
                     bbox = draw.textbbox((0, 0), line, font=font)
-                    text_y = y_cur - bbox[1]
+                    real_h = bbox[3] - bbox[1]
+                    text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
                     draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255),
                               stroke_width=4, stroke_fill=(0, 0, 0))
                     y_cur += line_h
@@ -322,7 +380,8 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     draw = ImageDraw.Draw(img)
 
                     bbox = draw.textbbox((0, 0), line, font=font)
-                    text_y = y_cur + 6 - bbox[1]
+                    real_h = bbox[3] - bbox[1]
+                    text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
                     draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255),
                               stroke_width=3, stroke_fill=(0, 0, 0))
                     y_cur += line_h

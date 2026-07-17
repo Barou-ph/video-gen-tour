@@ -176,54 +176,215 @@ def _build_concat_with_xfade(items: list, temp_dir: str, output: str, transition
         current_dur = offset + next_dur
 
 
-def _generate_chime_sound_effect(filepath: str):
-    import math, struct, wave
+# ─── Âm thanh chấm câu ──────────────────────────────────────────────────────
+# 4 kiểu tổng hợp dự phòng (dùng khi không có file thật trong assets/chimes/)
+CHIME_STYLES = {
+    "soft_bell": "🔔 Chuông nhẹ (tổng hợp)",
+    "wood_tap": "🪵 Gõ gỗ (tổng hợp)",
+    "subtle_tick": "✨ Tinh tế (tổng hợp)",
+    "marimba": "🎵 Marimba (tổng hợp)",
+    "random_custom": "🎧 Random 4 file thật (assets/chimes/) — khuyên dùng",
+}
+
+
+def list_custom_chime_files(chimes_dir: str = "assets/chimes") -> dict:
+    """Quét assets/chimes/ tìm file mp3/wav thật bạn đã tải về."""
+    result = {}
+    if not os.path.isdir(chimes_dir):
+        return result
+    for fname in sorted(os.listdir(chimes_dir)):
+        if fname.lower().endswith((".mp3", ".wav", ".m4a", ".ogg")):
+            label = os.path.splitext(fname)[0].replace("_", " ").replace("-", " ").strip().title()
+            result[f"file:{fname}"] = f"🎧 {label}"
+    return result
+
+
+def _generate_chime_sound_effect(filepath: str, style: str = "soft_bell"):
+    """
+    Tổng hợp âm thanh chấm câu (dùng làm fallback khi không có file thật).
+    Không còn kiểu sóng vuông "tè tè" cũ — thay bằng sóng sin có bội âm, envelope mượt.
+    """
+    import math, struct, wave, random
+
     if os.path.exists(filepath):
         try:
             os.remove(filepath)
         except Exception:
             pass
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
     sample_rate = 44100
-    duration    = 0.12
-    num_samples = int(sample_rate * duration)
+    samples = []
+
+    if style == "wood_tap":
+        duration = 0.09
+        num_samples = int(sample_rate * duration)
+        rnd = random.Random(42)
+        prev = 0.0
+        for i in range(num_samples):
+            t = i / sample_rate
+            env = math.exp(-55 * t)
+            noise = rnd.random() * 2 - 1
+            prev = prev * 0.7 + noise * 0.3
+            tone = math.sin(2 * math.pi * 170 * t)
+            val = (0.5 * prev + 0.5 * tone) * env
+            samples.append(val * 0.85)
+
+    elif style == "subtle_tick":
+        duration = 0.05
+        num_samples = int(sample_rate * duration)
+        for i in range(num_samples):
+            t = i / sample_rate
+            env = math.exp(-90 * t)
+            val = math.sin(2 * math.pi * 1500 * t) * env
+            samples.append(val * 0.32)
+
+    elif style == "marimba":
+        duration = 0.32
+        num_samples = int(sample_rate * duration)
+        base_freq = 523.0
+        for i in range(num_samples):
+            t = i / sample_rate
+            env1 = math.exp(-7 * t)
+            env2 = math.exp(-16 * t)
+            val = (
+                0.65 * math.sin(2 * math.pi * base_freq * t) * env1 +
+                0.35 * math.sin(2 * math.pi * base_freq * 2.76 * t) * env2
+            )
+            attack = min(1.0, t / 0.008)
+            samples.append(val * attack)
+
+    else:  # "soft_bell" mặc định
+        duration = 0.28
+        num_samples = int(sample_rate * duration)
+        base_freq = 1100.0
+        for i in range(num_samples):
+            t = i / sample_rate
+            env1 = math.exp(-9 * t)
+            env2 = math.exp(-15 * t)
+            env3 = math.exp(-22 * t)
+            val = (
+                0.55 * math.sin(2 * math.pi * base_freq * t) * env1 +
+                0.25 * math.sin(2 * math.pi * base_freq * 2.01 * t) * env2 +
+                0.15 * math.sin(2 * math.pi * base_freq * 3.02 * t) * env3
+            )
+            attack = min(1.0, t / 0.006)
+            samples.append(val * attack)
+
     with wave.open(filepath, 'w') as wav_file:
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
         wav_file.setframerate(sample_rate)
-        for i in range(num_samples):
-            t          = i / sample_rate
-            phase_pop  = 2 * math.pi * (800 * t - 350 * (t ** 2) / duration)
-            decay_pop  = math.exp(-25 * t)
-            val_pop    = math.sin(phase_pop) * decay_pop
-            if t < 0.03:
-                phase_click = 2 * math.pi * (3000 * t - 40000 * (t ** 2))
-                decay_click = math.exp(-150 * t)
-                val_click   = math.sin(phase_click) * decay_click
-            else:
-                val_click = 0.0
-            val    = max(-1.0, min(1.0, 0.6 * val_pop + 0.4 * val_click))
-            sample = int(val * 32767)
-            wav_file.writeframes(struct.pack('<h', sample))
+        for val in samples:
+            v = max(-1.0, min(1.0, val))
+            wav_file.writeframes(struct.pack('<h', int(v * 28000)))
 
 
-def _create_chime_track(timestamps: list, total_duration: float, chime_path: str, output_path: str):
-    import wave, struct
-    with wave.open(chime_path, 'r') as w:
-        params        = w.getparams()
-        chime_frames  = w.readframes(params.nframes)
-        chime_samples = list(struct.unpack(f"<{params.nframes}h", chime_frames))
-    sample_rate   = params.framerate
+def _prepare_chime_pool(chime_style: str, chimes_dir: str = "assets/chimes") -> list:
+    """
+    Trả về DANH SÁCH file .wav đã chuẩn hoá (mono, 44100Hz, ≤0.6s, fade-out nhẹ).
+    - "random_custom": dùng TẤT CẢ file thật trong assets/chimes/ làm 1 "hồ" âm thanh,
+      mỗi lần kêu sẽ chọn ngẫu nhiên 1 file trong hồ này → nghe đa dạng, chân thật
+      hơn hẳn so với lặp lại đúng 1 âm.
+    - "file:<name>": chỉ dùng đúng 1 file cụ thể.
+    - kiểu tổng hợp (soft_bell/wood_tap/...): sinh 1 file duy nhất.
+    """
+    os.makedirs("assets", exist_ok=True)
+
+    if chime_style == "random_custom":
+        custom = list_custom_chime_files(chimes_dir)
+        if not custom:
+            print("[AUDIO] assets/chimes/ trống — dùng chuông tổng hợp mặc định thay thế.")
+            out = "assets/_chime_fallback.wav"
+            _generate_chime_sound_effect(out, style="soft_bell")
+            return [out]
+        pool = []
+        for idx, key in enumerate(custom.keys()):
+            fname = key[len("file:"):]
+            src = os.path.join(chimes_dir, fname)
+            out = f"assets/_chime_custom_{idx}.wav"
+            try:
+                subprocess.run([
+                    "ffmpeg", "-y", "-i", src,
+                    "-ac", "1", "-ar", "44100",
+                    "-t", "0.6",
+                    "-af", "afade=t=out:st=0.45:d=0.15,volume=0.9",
+                    out
+                ], check=True, capture_output=True)
+                pool.append(out)
+            except Exception as e:
+                print(f"[AUDIO] Lỗi xử lý {src}: {e}")
+        if not pool:
+            out = "assets/_chime_fallback.wav"
+            _generate_chime_sound_effect(out, style="soft_bell")
+            return [out]
+        print(f"[AUDIO] Random pool: {len(pool)} âm thanh thật từ assets/chimes/")
+        return pool
+
+    if chime_style and chime_style.startswith("file:"):
+        fname = chime_style[len("file:"):]
+        src = os.path.join(chimes_dir, fname)
+        out = "assets/_chime_single.wav"
+        if os.path.exists(src):
+            try:
+                subprocess.run([
+                    "ffmpeg", "-y", "-i", src,
+                    "-ac", "1", "-ar", "44100",
+                    "-t", "0.6",
+                    "-af", "afade=t=out:st=0.45:d=0.15,volume=0.9",
+                    out
+                ], check=True, capture_output=True)
+                return [out]
+            except Exception as e:
+                print(f"[AUDIO] Lỗi xử lý {src}: {e}")
+        _generate_chime_sound_effect(out, style="soft_bell")
+        return [out]
+
+    out = "assets/_chime_synth.wav"
+    _generate_chime_sound_effect(out, style=chime_style or "soft_bell")
+    return [out]
+
+
+def _create_chime_track(timestamps: list, total_duration: float, chime_pool_paths: list,
+                         output_path: str, every_n: int = 4):
+    """
+    Ghép các mốc chime vào 1 track im lặng.
+    - `every_n`: GIÃN THƯA tiếng ting — chỉ kêu 1 lần sau mỗi `every_n` mốc câu, thay vì
+      kêu ở MỌI câu như bản cũ (đúng ý: "3-4 nhịp đọc mới có 1 tiếng ting").
+    - Mỗi lần kêu RANDOM 1 âm trong `chime_pool_paths` → đa dạng, không bị lặp đều đều.
+    """
+    import wave, struct, random
+
+    pools = []
+    sample_rate = 44100
+    params_ref = None
+    for p in chime_pool_paths:
+        with wave.open(p, 'r') as w:
+            params = w.getparams()
+            frames = w.readframes(params.nframes)
+            samples = list(struct.unpack(f"<{params.nframes}h", frames))
+            pools.append(samples)
+            sample_rate = params.framerate
+            params_ref = params
+
+    if not pools:
+        return
+
     total_samples = int(total_duration * sample_rate)
     track_samples = [0] * total_samples
-    for t in timestamps:
+
+    rnd = random.Random()
+    selected_ts = timestamps[::max(1, every_n)]
+
+    for t in selected_ts:
+        chime_samples = rnd.choice(pools)
         start = int(t * sample_rate)
         for idx, s in enumerate(chime_samples):
             ti = start + idx
             if ti < total_samples:
                 track_samples[ti] = max(-32768, min(32767, track_samples[ti] + s))
+
     with wave.open(output_path, 'w') as w:
-        w.setparams(params)
+        w.setparams(params_ref)
         w.writeframes(struct.pack(f"<{len(track_samples)}h", *track_samples))
 
 
@@ -310,30 +471,69 @@ def _add_logo(video: str, logo: str, output: str, voice_duration: float = None):
         shutil.copy(video, output)
 
 
+def _append_outro(main_video: str, outro_path: str, output_path: str):
+    """
+    Nối video chính với outro.mp4 đã dựng sẵn (từ generate_outro.py), có sẵn
+    audio im lặng bên trong. Dùng ffmpeg concat filter, chuẩn hoá codec/khung
+    hình/tần số mẫu âm thanh giữa 2 clip để tránh lỗi ghép.
+    """
+    result = subprocess.run([
+        "ffmpeg", "-y",
+        "-i", main_video, "-i", outro_path,
+        "-filter_complex",
+        "[0:v]scale=1080:1920,setsar=1,fps=30[v0];"
+        "[1:v]scale=1080:1920,setsar=1,fps=30[v1];"
+        "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[a0];"
+        "[1:a]aformat=sample_rates=44100:channel_layouts=stereo[a1];"
+        "[v0][a0][v1][a1]concat=n=2:v=1:a=1[outv][outa]",
+        "-map", "[outv]", "-map", "[outa]",
+        "-c:v", "libx264", "-preset", "fast",
+        "-c:a", "aac",
+        "-pix_fmt", "yuv420p",
+        output_path
+    ], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"[VIDEO] Ghép outro dựng sẵn lỗi (bỏ qua, giữ video không outro): {result.stderr[-300:]}")
+        shutil.copy(main_video, output_path)
+
+
 def build_video(
     media_paths: list[str],
     audio_path: str,
     output_path: str,
     logo_path: str = None,
     bg_music_path: str = None,
-    script: str = None,
     transition_type: str = "fade",
     filter_mode: str = "Gốc (Không lọc)",
     show_ending: bool = True,
     use_chimes: bool = True,
+    chime_style: str = "random_custom",
+    chime_every_n: int = 4,
     srt_path: str = None,
 ) -> str:
+    """
+    Lưu ý: KHÔNG còn tham số `script`/hook — hook đã bị bỏ hẳn theo yêu cầu,
+    để người dùng tự làm tay trên TikTok cho đa dạng hơn.
+    """
 
     temp_dir = tempfile.mkdtemp()
+    outro_path = "assets/outro.mp4"
+    use_prerendered_outro = show_ending and os.path.exists(outro_path)
 
     try:
         audio_duration = _get_duration(audio_path)
-        total_duration = audio_duration + 3.0 if show_ending else audio_duration
+        # Nếu đã có outro dựng sẵn (assets/outro.mp4): video chính chỉ dài bằng
+        # audio, outro được nối thêm riêng ở cuối (không cần xử lý PIL mỗi lần nữa).
+        # Nếu chưa có: giữ hành vi cũ — tự vẽ màn hình đen + logo tĩnh 3s.
+        if use_prerendered_outro:
+            total_duration = audio_duration
+        else:
+            total_duration = audio_duration + 3.0 if show_ending else audio_duration
         print(f"[VIDEO] Audio: {audio_duration:.1f}s (Total: {total_duration:.1f}s) | {len(media_paths)} media files")
 
         items = _prepare_media(media_paths, temp_dir, audio_duration, filter_mode=filter_mode)
 
-        if show_ending:
+        if show_ending and not use_prerendered_outro:
             ending_img_path = os.path.join(temp_dir, "ending_screen.jpg")
             generate_ending_image(1080, 1920, logo_path, ending_img_path)
             items.append({"path": ending_img_path, "duration": 3.4, "is_video": False})
@@ -351,15 +551,14 @@ def build_video(
         if use_chimes and srt_path and os.path.exists(srt_path):
             import pysrt
             try:
-                chime_wav = "assets/chime.wav"
-                _generate_chime_sound_effect(chime_wav)
-
+                pool = _prepare_chime_pool(chime_style)
                 subs = pysrt.open(srt_path, encoding="utf-8")
                 timestamps = [sub.start.ordinal / 1000.0 for sub in subs]
 
                 chimes_track = os.path.join(temp_dir, "chimes_track.wav")
-                _create_chime_track(timestamps, audio_duration, chime_wav, chimes_track)
-                print(f"[AUDIO] Chime track OK: {len(timestamps)} dings")
+                _create_chime_track(timestamps, audio_duration, pool, chimes_track, every_n=chime_every_n)
+                print(f"[AUDIO] Chime track OK: {len(timestamps[::max(1, chime_every_n)])} tiếng "
+                      f"(giãn thưa mỗi {chime_every_n} câu, random trong {len(pool)} âm)")
             except Exception as e:
                 print(f"[AUDIO] Lỗi tạo chime track: {e}")
 
@@ -385,25 +584,21 @@ def build_video(
             merged
         ], check=True, capture_output=True)
 
-        # Hook overlay 3 giây đầu
-        after_hook = os.path.join(temp_dir, "after_hook.mp4")
-        if script:
-            try:
-                _add_hook_overlay(merged, script, after_hook)
-                print(f"[VIDEO] Hook OK: {script[:50]}...")
-            except Exception as e:
-                print(f"[VIDEO] Hook lỗi (bỏ qua): {e}")
-                shutil.copy(merged, after_hook)
-        else:
-            shutil.copy(merged, after_hook)
+        # Ghép outro dựng sẵn (nếu có) trước khi gắn logo — logo góc trên trái
+        # chỉ hiện trong đoạn nội dung chính (voice_duration), không đè lên outro.
+        if use_prerendered_outro:
+            with_outro = os.path.join(temp_dir, "with_outro.mp4")
+            _append_outro(merged, outro_path, with_outro)
+            merged = with_outro
+            print(f"[VIDEO] Đã ghép outro dựng sẵn: {outro_path}")
 
-        # Logo góc trên trái
+        # Không còn bước hook overlay — logo gắn thẳng lên video đã merge
         if logo_path and os.path.exists(logo_path):
             print(f"[VIDEO] Thêm logo: {logo_path}")
-            _add_logo(after_hook, logo_path, output_path,
+            _add_logo(merged, logo_path, output_path,
                       voice_duration=audio_duration if show_ending else None)
         else:
-            shutil.copy(after_hook, output_path)
+            shutil.copy(merged, output_path)
 
         print(f"[VIDEO] Done → {output_path} ({_get_duration(output_path):.1f}s)")
 

@@ -7,8 +7,8 @@ import re
 from dotenv import load_dotenv
 
 from modules.voice_gen import text_to_speech, clean_script, VOICES
-from modules.script_gen import generate_script, parse_tour_info, generate_hook
-from modules.video_builder import build_video
+from modules.script_gen import generate_script, parse_tour_info
+from modules.video_builder import build_video, CHIME_STYLES, list_custom_chime_files
 from modules.subtitle_gen import generate_subtitles, burn_subtitles, SUBTITLE_STYLES
 from modules.utils import ensure_dirs, make_temp_dir, clean_temp, cleanup_old_outputs, cleanup_old_temps
 
@@ -178,7 +178,19 @@ Bao gồm: Xe limousine, khách sạn 3 sao, ăn sáng, HDV""",
         with col_ui3:
             add_subtitle = st.checkbox("Burn subtitle vào video", value=True)
         with col_ui4:
-            use_chimes = st.checkbox("Tiếng cling cling chữ chạy", value=True)
+            use_chimes = st.checkbox("Âm thanh chấm câu", value=True)
+
+        chime_style_key = "soft_bell"
+        if use_chimes:
+            all_chime_options = {**CHIME_STYLES, **list_custom_chime_files()}
+            chime_label = st.selectbox(
+                "Kiểu âm thanh chấm câu",
+                options=list(all_chime_options.values()),
+                index=0,
+                help="Mục có 🎧 là file mp3/wav thật bạn tự thêm vào assets/chimes/ — chất lượng tốt hơn kiểu tổng hợp.",
+            )
+            _reverse_map = {v: k for k, v in all_chime_options.items()}
+            chime_style_key = _reverse_map[chime_label]
             
         show_ending = st.checkbox("Thêm màn hình kết thúc (CTA Follow)", value=True)
 
@@ -239,7 +251,6 @@ if submitted:
 
         script = generate_script(tour_raw=tour_raw, max_words=max_words)
         script = clean_script(script)
-        hook = generate_hook(tour_raw)   # Tạo hook ngắn gọn 1 dòng
 
         if not script or len(script) < 10:
             st.error("Script rỗng. Thử lại!")
@@ -248,7 +259,6 @@ if submitted:
         with status:
             st.write("✅ Script & Hook xong!")
             with st.expander("📄 Xem chi tiết từ AI"):
-                st.markdown(f"**Hook tiêu đề:** {hook}")
                 st.markdown(f"**Bài đọc:**\n{script}")
 
         # Bước 3: TTS (Chuyển văn bản thành giọng đọc)
@@ -283,7 +293,6 @@ if submitted:
             output_path=draft_video,
             logo_path=logo_path,
             bg_music_path=bg_music_path,
-            script=hook,
             transition_type=transition_type,
             filter_mode=filter_mode,
             show_ending=show_ending,
