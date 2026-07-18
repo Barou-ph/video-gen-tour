@@ -50,6 +50,7 @@ QUY TẮC:
 - Xen kẽ câu ngắn và câu dài để tạo nhịp điệu
 - KHÔNG dùng viết tắt: "3 ngày 2 đêm" thay vì "3N2Đ", "thứ Sáu" thay vì "T6"
 - Số tiền viết bằng chữ: "hai triệu chín" thay vì "2.9tr"
+- Là công ty du lịch Khanh Travel chứ không bao giờ dùng từ "đại lí" 
 
 CHỈ trả về script, không giải thích, không tiêu đề."""
 
