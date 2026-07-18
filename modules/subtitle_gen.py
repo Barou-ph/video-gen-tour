@@ -115,7 +115,6 @@ def _merge_short_fragments(parts: list, min_words: int = _MIN_CHUNK_WORDS) -> li
             merged[-1] = merged[-1] + ", " + p
         else:
             merged.append(p)
-    # Nếu mảnh ĐẦU TIÊN quá ngắn, gộp luôn vào mảnh kế tiếp (tránh mồ côi ở đầu)
     if len(merged) >= 2 and len(merged[0].split()) < min_words:
         merged[1] = merged[0] + ", " + merged[1]
         merged.pop(0)
@@ -154,13 +153,18 @@ def _get_font(size: int):
         return ImageFont.load_default()
 
 
-# Các kiểu subtitle có thể chọn trong app.py (dùng đúng chuỗi này cho selectbox)
+# Các kiểu subtitle có thể chọn trong app.py (dùng đúng chuỗi này cho selectbox).
+# "Badge Vàng (Không đỏ)" đặt ĐẦU TIÊN -> mặc định index 0, đúng yêu cầu khách:
+# toàn vàng, không còn màu đỏ. Bản Vàng/Đỏ cũ vẫn giữ nguyên, chỉ không còn mặc định.
 SUBTITLE_STYLES = [
+    "Badge Vàng (Không đỏ)",
     "Badge (Khung chữ Vàng/Đỏ)",
     "Standard (Nền đen mờ)",
     "Neon (Viền phát sáng)",
     "Gradient (Khung liền)",
     "Minimal (Trắng viền đen)",
+    "Pill Vàng (Bo tròn hoàn toàn)",
+    "Outline Vàng (Viền, nền trong suốt)",
 ]
 
 
@@ -210,7 +214,6 @@ def _wrap_natural(draw, text: str, font, max_w: int, min_words_per_line: int = 4
 
         num_lines += 1
         if num_lines >= len(words):
-            # Fallback: bọc tham lam theo max_w thật (LUÔN đảm bảo fit max_w)
             lines, cur = [], ""
             for word in words:
                 test = (cur + " " + word).strip()
@@ -221,21 +224,18 @@ def _wrap_natural(draw, text: str, font, max_w: int, min_words_per_line: int = 4
                     cur = test
             if cur:
                 lines.append(cur)
-            # Chỉ gộp dòng cuối quá ngắn vào dòng trước NẾU gộp xong vẫn fit max_w
             if len(lines) >= 2 and len(lines[-1].split()) < min_words_per_line:
                 merged_candidate = lines[-2] + " " + lines[-1]
                 if line_w(merged_candidate) <= max_w:
                     lines[-2] = merged_candidate
                     lines.pop()
-                # else: giữ nguyên dòng ngắn — ưu tiên KHÔNG tràn màn hình
             return lines
 
 
 def _enforce_max_width(draw, lines: list, font, max_w: int) -> list:
     """
-    Lớp bảo hiểm cuối cùng: dù _wrap_natural có tính sai ở đâu đó, hàm này
-    đảm bảo TUYỆT ĐỐI không dòng nào vượt quá max_w — chặn triệt để lỗi
-    tràn chữ khỏi khung hình.
+    Lớp bảo hiểm cuối cùng: đảm bảo TUYỆT ĐỐI không dòng nào vượt quá max_w —
+    chặn triệt để lỗi tràn chữ khỏi khung hình.
     """
     def line_w(s):
         bbox = draw.textbbox((0, 0), s, font=font)
@@ -260,7 +260,7 @@ def _enforce_max_width(draw, lines: list, font, max_w: int) -> list:
     return result
 
 
-def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_style: str = "Badge (Khung chữ Vàng/Đỏ)") -> str:
+def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_style: str = "Badge Vàng (Không đỏ)") -> str:
     """Burn subtitle vào video dùng Pillow + FFmpeg."""
     import tempfile, shutil, json
     from PIL import Image, ImageDraw, ImageFilter
@@ -313,17 +313,55 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
 
             max_w = int(width * 0.85)
             lines = _wrap_natural(draw, sub_text, font, max_w, min_words_per_line=4)
-            lines = _enforce_max_width(draw, lines, font, max_w)  # lớp bảo hiểm chống tràn
+            lines = _enforce_max_width(draw, lines, font, max_w)
 
             line_widths = []
             for line in lines:
                 bbox = draw.textbbox((0, 0), line, font=font)
                 line_widths.append(bbox[2] - bbox[0])
             common_tw = max(line_widths) if line_widths else 0
-            # Bề rộng khung không bao giờ vượt quá khung hình
             common_tw = min(common_tw, max_w)
 
-            if "Badge" in subtitle_style:
+            if "Badge Vàng" in subtitle_style:
+                # Toàn vàng, KHÔNG có đỏ — theo yêu cầu khách. 2 sắc vàng gần
+                # nhau xen kẽ để có chiều sâu nhẹ mà vẫn đồng nhất tông vàng.
+                pad_x = 24
+                pad_y = 16
+                gap   = 14
+                box_h  = ascent + descent + pad_y * 2
+                box_w  = min(common_tw + pad_x * 2, width - 20)
+                line_h = box_h + gap
+                total_h = len(lines) * line_h - gap
+                y_cur = int(height * 0.84) - total_h // 2
+                x_box = (width - box_w) // 2
+
+                yellow_shades = [(245, 190, 20, 255), (229, 168, 15, 255)]  # vàng sáng / vàng đậm hơn xen kẽ
+
+                for line_idx, line in enumerate(lines):
+                    tw = min(line_widths[line_idx], box_w - pad_x * 2)
+                    text_x = x_box + (box_w - tw) // 2
+                    bg_color = yellow_shades[line_idx % 2]
+
+                    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                    ov_draw = ImageDraw.Draw(overlay)
+                    ov_draw.rounded_rectangle(
+                        [x_box, y_cur, x_box + box_w, y_cur + box_h],
+                        radius=12,
+                        fill=bg_color
+                    )
+                    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+                    draw = ImageDraw.Draw(img)
+
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    real_h = bbox[3] - bbox[1]
+                    text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
+                    # Chữ đen trên nền vàng dễ đọc hơn chữ trắng (tương phản tốt hơn)
+                    draw.text((text_x, text_y), line, font=font, fill=(30, 24, 4),
+                               stroke_width=1, stroke_fill=(30, 24, 4))
+                    y_cur += line_h
+
+            elif "Badge" in subtitle_style:
+                # Bản gốc: Vàng/Đỏ xen kẽ — giữ nguyên không đổi
                 pad_x = 24
                 pad_y = 16
                 gap   = 14
@@ -357,6 +395,76 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     real_h = bbox[3] - bbox[1]
                     text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
                     draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255))
+                    y_cur += line_h
+
+            elif "Pill" in subtitle_style:
+                # Viên thuốc bo tròn hoàn toàn (radius = nửa chiều cao box), toàn vàng
+                pad_x = 30
+                pad_y = 14
+                gap   = 16
+                box_h  = ascent + descent + pad_y * 2
+                box_w  = min(common_tw + pad_x * 2, width - 20)
+                line_h = box_h + gap
+                total_h = len(lines) * line_h - gap
+                y_cur = int(height * 0.84) - total_h // 2
+                x_box = (width - box_w) // 2
+                pill_radius = box_h // 2
+
+                for line_idx, line in enumerate(lines):
+                    tw = min(line_widths[line_idx], box_w - pad_x * 2)
+                    text_x = x_box + (box_w - tw) // 2
+
+                    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                    ov_draw = ImageDraw.Draw(overlay)
+                    ov_draw.rounded_rectangle(
+                        [x_box, y_cur, x_box + box_w, y_cur + box_h],
+                        radius=pill_radius,
+                        fill=(247, 195, 30, 255)
+                    )
+                    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+                    draw = ImageDraw.Draw(img)
+
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    real_h = bbox[3] - bbox[1]
+                    text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
+                    draw.text((text_x, text_y), line, font=font, fill=(35, 26, 4))
+                    y_cur += line_h
+
+            elif "Outline" in subtitle_style:
+                # Nền trong suốt, chỉ có viền vàng — nhẹ nhàng hơn, không che ảnh nền nhiều
+                pad_x = 22
+                pad_y = 14
+                gap   = 16
+                box_h  = ascent + descent + pad_y * 2
+                box_w  = min(common_tw + pad_x * 2, width - 20)
+                line_h = box_h + gap
+                total_h = len(lines) * line_h - gap
+                y_cur = int(height * 0.84) - total_h // 2
+                x_box = (width - box_w) // 2
+                outline_color = (247, 195, 30, 255)
+
+                for line_idx, line in enumerate(lines):
+                    tw = min(line_widths[line_idx], box_w - pad_x * 2)
+                    text_x = x_box + (box_w - tw) // 2
+
+                    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                    ov_draw = ImageDraw.Draw(overlay)
+                    # nền đen mờ nhẹ để chữ dễ đọc trên ảnh sáng, viền vàng nổi bật
+                    ov_draw.rounded_rectangle(
+                        [x_box, y_cur, x_box + box_w, y_cur + box_h],
+                        radius=12,
+                        fill=(0, 0, 0, 90),
+                        outline=outline_color,
+                        width=3
+                    )
+                    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+                    draw = ImageDraw.Draw(img)
+
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    real_h = bbox[3] - bbox[1]
+                    text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
+                    draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255),
+                              stroke_width=2, stroke_fill=(0, 0, 0))
                     y_cur += line_h
 
             elif "Neon" in subtitle_style:
