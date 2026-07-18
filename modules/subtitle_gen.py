@@ -154,15 +154,15 @@ def _get_font(size: int):
 
 
 # Các kiểu subtitle có thể chọn trong app.py (dùng đúng chuỗi này cho selectbox).
-# "Badge Vàng (Không đỏ)" đặt ĐẦU TIÊN -> mặc định index 0, đúng yêu cầu khách:
-# toàn vàng, không còn màu đỏ. Bản Vàng/Đỏ cũ vẫn giữ nguyên, chỉ không còn mặc định.
+# "Trắng (Không nền)" đặt ĐẦU TIÊN -> mặc định index 0: chỉ chữ trắng viền đen,
+# KHÔNG có khung nền vàng/đen gì cả — đúng yêu cầu khách.
 SUBTITLE_STYLES = [
-    "Badge Vàng (Không đỏ)",
+    "Trắng (Không nền)",
+    "Badge Vàng (Đồng nhất)",
     "Badge (Khung chữ Vàng/Đỏ)",
     "Standard (Nền đen mờ)",
     "Neon (Viền phát sáng)",
     "Gradient (Khung liền)",
-    "Minimal (Trắng viền đen)",
     "Pill Vàng (Bo tròn hoàn toàn)",
     "Outline Vàng (Viền, nền trong suốt)",
 ]
@@ -260,7 +260,7 @@ def _enforce_max_width(draw, lines: list, font, max_w: int) -> list:
     return result
 
 
-def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_style: str = "Badge Vàng (Không đỏ)") -> str:
+def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_style: str = "Trắng (Không nền)") -> str:
     """Burn subtitle vào video dùng Pillow + FFmpeg."""
     import tempfile, shutil, json
     from PIL import Image, ImageDraw, ImageFilter
@@ -322,9 +322,26 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
             common_tw = max(line_widths) if line_widths else 0
             common_tw = min(common_tw, max_w)
 
-            if "Badge Vàng" in subtitle_style:
-                # Toàn vàng, KHÔNG có đỏ — theo yêu cầu khách. 2 sắc vàng gần
-                # nhau xen kẽ để có chiều sâu nhẹ mà vẫn đồng nhất tông vàng.
+            if "Không nền" in subtitle_style:
+                # MẶC ĐỊNH: chỉ chữ trắng viền đen, KHÔNG có khung nền gì cả
+                gap = 16
+                box_h  = ascent + descent
+                line_h = box_h + gap
+                total_h = len(lines) * line_h - gap
+                y_cur = int(height * 0.84) - total_h // 2
+
+                for line_idx, line in enumerate(lines):
+                    tw = line_widths[line_idx]
+                    text_x = (width - tw) // 2
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    real_h = bbox[3] - bbox[1]
+                    text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
+                    draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255),
+                              stroke_width=4, stroke_fill=(0, 0, 0))
+                    y_cur += line_h
+
+            elif "Đồng nhất" in subtitle_style:
+                # 1 màu vàng nhạt DUY NHẤT cho mọi dòng, không xen kẽ đậm/nhạt
                 pad_x = 24
                 pad_y = 16
                 gap   = 14
@@ -335,19 +352,18 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                 y_cur = int(height * 0.84) - total_h // 2
                 x_box = (width - box_w) // 2
 
-                yellow_shades = [(245, 190, 20, 255), (229, 168, 15, 255)]  # vàng sáng / vàng đậm hơn xen kẽ
+                solid_yellow = (250, 200, 60, 255)  # vàng nhạt
 
                 for line_idx, line in enumerate(lines):
                     tw = min(line_widths[line_idx], box_w - pad_x * 2)
                     text_x = x_box + (box_w - tw) // 2
-                    bg_color = yellow_shades[line_idx % 2]
 
                     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
                     ov_draw = ImageDraw.Draw(overlay)
                     ov_draw.rounded_rectangle(
                         [x_box, y_cur, x_box + box_w, y_cur + box_h],
                         radius=12,
-                        fill=bg_color
+                        fill=solid_yellow
                     )
                     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
                     draw = ImageDraw.Draw(img)
@@ -355,9 +371,7 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     bbox = draw.textbbox((0, 0), line, font=font)
                     real_h = bbox[3] - bbox[1]
                     text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
-                    # Chữ đen trên nền vàng dễ đọc hơn chữ trắng (tương phản tốt hơn)
-                    draw.text((text_x, text_y), line, font=font, fill=(30, 24, 4),
-                               stroke_width=1, stroke_fill=(30, 24, 4))
+                    draw.text((text_x, text_y), line, font=font, fill=(35, 26, 4))
                     y_cur += line_h
 
             elif "Badge" in subtitle_style:
@@ -398,7 +412,6 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     y_cur += line_h
 
             elif "Pill" in subtitle_style:
-                # Viên thuốc bo tròn hoàn toàn (radius = nửa chiều cao box), toàn vàng
                 pad_x = 30
                 pad_y = 14
                 gap   = 16
@@ -431,7 +444,6 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     y_cur += line_h
 
             elif "Outline" in subtitle_style:
-                # Nền trong suốt, chỉ có viền vàng — nhẹ nhàng hơn, không che ảnh nền nhiều
                 pad_x = 22
                 pad_y = 14
                 gap   = 16
@@ -449,7 +461,6 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
 
                     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
                     ov_draw = ImageDraw.Draw(overlay)
-                    # nền đen mờ nhẹ để chữ dễ đọc trên ảnh sáng, viền vàng nổi bật
                     ov_draw.rounded_rectangle(
                         [x_box, y_cur, x_box + box_w, y_cur + box_h],
                         radius=12,
@@ -537,23 +548,6 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     text_y = y_cur + (box_h_each - real_h) // 2 - bbox[1]
                     draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255))
                     y_cur += box_h_each + line_gap
-
-            elif "Minimal" in subtitle_style:
-                gap = 16
-                box_h  = ascent + descent
-                line_h = box_h + gap
-                total_h = len(lines) * line_h - gap
-                y_cur = int(height * 0.84) - total_h // 2
-
-                for line_idx, line in enumerate(lines):
-                    tw = line_widths[line_idx]
-                    text_x = (width - tw) // 2
-                    bbox = draw.textbbox((0, 0), line, font=font)
-                    real_h = bbox[3] - bbox[1]
-                    text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
-                    draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255),
-                              stroke_width=4, stroke_fill=(0, 0, 0))
-                    y_cur += line_h
 
             else:
                 # "Standard (Nền đen mờ)"
