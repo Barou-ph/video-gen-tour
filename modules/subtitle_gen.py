@@ -4,10 +4,9 @@ import os
 
 def generate_subtitles(audio_path: str, srt_path: str, script: str = None) -> str:
     """
-    Tạo SRT từ script text — chia đều theo thời lượng audio.
+    Tạo SRT từ script text — chia theo tỉ lệ số từ mỗi câu để khớp giọng đọc.
     Chính xác 100% vì dùng script gốc, không qua Whisper.
     """
-    # Lấy thời lượng audio
     probe = subprocess.run([
         "ffprobe", "-v", "quiet",
         "-show_entries", "format=duration",
@@ -15,46 +14,112 @@ def generate_subtitles(audio_path: str, srt_path: str, script: str = None) -> st
     ], capture_output=True, text=True)
     total_duration = float(probe.stdout.strip())
 
-    # Tách script thành các câu ngắn
     sentences = _split_sentences(script)
     print(f"[SUB] {len(sentences)} câu / {total_duration:.1f}s")
 
-    # Chia thời gian đều cho từng câu
-    dur_each = total_duration / len(sentences)
+    word_counts = [max(1, len(s.split())) for s in sentences]
+    total_words = sum(word_counts)
 
     with open(srt_path, "w", encoding="utf-8") as f:
-        for i, sent in enumerate(sentences):
-            start = i * dur_each
-            end   = min((i + 1) * dur_each, total_duration)
+        cursor = 0.0
+        for i, (sent, wc) in enumerate(zip(sentences, word_counts)):
+            dur = total_duration * (wc / total_words)
+            start = cursor
+            end   = min(cursor + dur, total_duration)
             f.write(f"{i+1}\n")
             f.write(f"{_to_srt_time(start)} --> {_to_srt_time(end)}\n")
             f.write(f"{sent}\n\n")
+            cursor = end
 
     return srt_path
 
 
+# Liên từ tiếng Việt dùng làm điểm ngắt tự nhiên, ưu tiên hơn cắt cứng theo số từ
+_NATURAL_BREAK_WORDS = {
+    "và", "nhưng", "mà", "rồi", "hoặc", "hay", "vì", "nên",
+    "để", "khi", "nếu", "còn", "với", "cùng", "tại",
+}
+
+_MIN_CHUNK_WORDS = 5  # mỗi câu SRT tối thiểu 5 từ, tránh mảnh vụn kiểu "vĩ,"
+
+
 def _split_sentences(text: str) -> list:
-    """Tách text thành câu ngắn ~8-12 từ mỗi câu."""
+    """
+    Tách text thành các cụm để hiển thị phụ đề, ưu tiên ngắt tại điểm nghỉ tự
+    nhiên (dấu phẩy, liên từ) thay vì cắt cứng theo số từ cố định — tránh kiểu
+    ngắt cắt lìa 1 cụm từ để lại mảnh mồ côi ở đầu câu sau (vd: "vĩ, Vườn...").
+    """
     import re
 
-    # Tách theo dấu câu trước
     raw = re.split(r'(?<=[.!?])\s+', text.strip())
 
-    # Với câu dài hơn 12 từ, chia tiếp
     result = []
     for sent in raw:
-        words = sent.split()
-        if len(words) <= 12:
-            result.append(sent.strip())
-        else:
-            # Chia thành chunks ~8 từ
-            chunk_size = 8
-            for j in range(0, len(words), chunk_size):
-                chunk = " ".join(words[j:j+chunk_size])
-                if chunk.strip():
-                    result.append(chunk.strip())
+        result.extend(_split_long_clause(sent.strip()))
 
     return [s for s in result if s]
+
+
+def _split_long_clause(sent: str, target_max: int = 10) -> list:
+    words = sent.split()
+    if len(words) <= target_max:
+        return [sent] if sent else []
+
+    if "," in sent:
+        parts = [p.strip() for p in sent.split(",") if p.strip()]
+        out = []
+        for p in parts:
+            out.extend(_split_long_clause(p, target_max))
+        return _merge_short_fragments(out)
+
+    mid = len(words) // 2
+    best_idx, best_dist = None, None
+    for idx, w in enumerate(words):
+        if w.lower().strip(".,!?") in _NATURAL_BREAK_WORDS:
+            dist = abs(idx - mid)
+            if best_dist is None or dist < best_dist:
+                best_dist, best_idx = dist, idx
+    if best_idx is not None and 1 <= best_idx <= len(words) - 1:
+        left  = " ".join(words[:best_idx])
+        right = " ".join(words[best_idx:])
+        if left and right:
+            return _split_long_clause(left, target_max) + _split_long_clause(right, target_max)
+
+    n = len(words)
+    num_chunks = max(2, round(n / 8))
+    base = n // num_chunks
+    chunks, idx = [], 0
+    for c in range(num_chunks):
+        remaining_chunks = num_chunks - c
+        remaining_words = n - idx
+        size = base if c < num_chunks - 1 else remaining_words
+        if remaining_chunks == 1 and remaining_words < _MIN_CHUNK_WORDS and chunks:
+            chunks[-1] += " " + " ".join(words[idx:])
+            idx = n
+            break
+        chunks.append(" ".join(words[idx:idx + size]))
+        idx += size
+    return [c.strip() for c in chunks if c.strip()]
+
+
+def _merge_short_fragments(parts: list, min_words: int = _MIN_CHUNK_WORDS) -> list:
+    """
+    Gộp các mảnh quá ngắn (sau khi tách theo dấu phẩy) vào mảnh liền kề,
+    tránh để lại 1-2 từ mồ côi đứng riêng thành 1 câu SRT.
+    """
+    if not parts:
+        return parts
+    merged = [parts[0]]
+    for p in parts[1:]:
+        if len(p.split()) < min_words:
+            merged[-1] = merged[-1] + ", " + p
+        else:
+            merged.append(p)
+    # Nếu mảnh ĐẦU TIÊN quá ngắn, gộp luôn vào mảnh kế tiếp (tránh mồ côi ở đầu)
+    if len(merged) >= 2 and len(merged[0].split()) < min_words:
+        merged[1] = merged[0] + ", " + merged[1]
+        merged.pop(0)
+    return merged
 
 
 def _to_srt_time(seconds: float) -> str:
@@ -101,9 +166,11 @@ SUBTITLE_STYLES = [
 
 def _wrap_natural(draw, text: str, font, max_w: int, min_words_per_line: int = 4) -> list:
     """
-    Bọc dòng chữ sao cho mỗi dòng có TỐI THIỂU min_words_per_line từ,
-    tránh kiểu bọc tham lam (greedy) hay để lại 1 từ mồ côi ở dòng cuối
-    (ví dụ: "...khám phá" -> "khám" / "phá" trông rất vô duyên).
+    Bọc dòng chữ sao cho mỗi dòng có TỐI THIỂU min_words_per_line từ, tránh
+    kiểu bọc tham lam (greedy) hay để lại 1 từ mồ côi ở dòng cuối. QUAN TRỌNG:
+    khi gộp dòng cuối quá ngắn vào dòng trước, LUÔN kiểm tra dòng gộp có vượt
+    max_w hay không — nếu vượt thì KHÔNG gộp (thà để dòng ngắn còn hơn tràn
+    khỏi màn hình).
     """
     import math
 
@@ -143,8 +210,7 @@ def _wrap_natural(draw, text: str, font, max_w: int, min_words_per_line: int = 4
 
         num_lines += 1
         if num_lines >= len(words):
-            # Fallback: bọc tham lam theo max_w thật, rồi gộp dòng cuối
-            # vào dòng trước nếu vẫn còn quá ngắn (chặn mồ côi tuyệt đối)
+            # Fallback: bọc tham lam theo max_w thật (LUÔN đảm bảo fit max_w)
             lines, cur = [], ""
             for word in words:
                 test = (cur + " " + word).strip()
@@ -155,10 +221,43 @@ def _wrap_natural(draw, text: str, font, max_w: int, min_words_per_line: int = 4
                     cur = test
             if cur:
                 lines.append(cur)
+            # Chỉ gộp dòng cuối quá ngắn vào dòng trước NẾU gộp xong vẫn fit max_w
             if len(lines) >= 2 and len(lines[-1].split()) < min_words_per_line:
-                lines[-2] = lines[-2] + " " + lines[-1]
-                lines.pop()
+                merged_candidate = lines[-2] + " " + lines[-1]
+                if line_w(merged_candidate) <= max_w:
+                    lines[-2] = merged_candidate
+                    lines.pop()
+                # else: giữ nguyên dòng ngắn — ưu tiên KHÔNG tràn màn hình
             return lines
+
+
+def _enforce_max_width(draw, lines: list, font, max_w: int) -> list:
+    """
+    Lớp bảo hiểm cuối cùng: dù _wrap_natural có tính sai ở đâu đó, hàm này
+    đảm bảo TUYỆT ĐỐI không dòng nào vượt quá max_w — chặn triệt để lỗi
+    tràn chữ khỏi khung hình.
+    """
+    def line_w(s):
+        bbox = draw.textbbox((0, 0), s, font=font)
+        return bbox[2] - bbox[0]
+
+    result = []
+    for line in lines:
+        if line_w(line) <= max_w:
+            result.append(line)
+            continue
+        words = line.split()
+        cur = ""
+        for w in words:
+            test = (cur + " " + w).strip()
+            if line_w(test) > max_w and cur:
+                result.append(cur)
+                cur = w
+            else:
+                cur = test
+        if cur:
+            result.append(cur)
+    return result
 
 
 def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_style: str = "Badge (Khung chữ Vàng/Đỏ)") -> str:
@@ -192,8 +291,6 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
         ], check=True, capture_output=True)
 
         font = _get_font(54)
-        # Metrics thật của font — dùng để tính chiều cao badge cố định,
-        # không phụ thuộc vào việc chữ có dấu (ạ/ệ/ộ...) hay không.
         ascent, descent = font.getmetrics()
 
         frame_files = sorted(os.listdir(frames_dir))
@@ -216,28 +313,29 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
 
             max_w = int(width * 0.85)
             lines = _wrap_natural(draw, sub_text, font, max_w, min_words_per_line=4)
+            lines = _enforce_max_width(draw, lines, font, max_w)  # lớp bảo hiểm chống tràn
 
-            # Bề rộng khung dùng CHUNG cho mọi dòng trong cùng 1 subtitle
-            # (theo dòng dài nhất) để các badge canh thẳng hàng, không lệch cỡ.
             line_widths = []
             for line in lines:
                 bbox = draw.textbbox((0, 0), line, font=font)
                 line_widths.append(bbox[2] - bbox[0])
             common_tw = max(line_widths) if line_widths else 0
+            # Bề rộng khung không bao giờ vượt quá khung hình
+            common_tw = min(common_tw, max_w)
 
             if "Badge" in subtitle_style:
                 pad_x = 24
                 pad_y = 16
                 gap   = 14
                 box_h  = ascent + descent + pad_y * 2
-                box_w  = common_tw + pad_x * 2
+                box_w  = min(common_tw + pad_x * 2, width - 20)
                 line_h = box_h + gap
                 total_h = len(lines) * line_h - gap
                 y_cur = int(height * 0.84) - total_h // 2
                 x_box = (width - box_w) // 2
 
                 for line_idx, line in enumerate(lines):
-                    tw = line_widths[line_idx]
+                    tw = min(line_widths[line_idx], box_w - pad_x * 2)
                     text_x = x_box + (box_w - tw) // 2
 
                     if line_idx % 2 == 0:
@@ -255,8 +353,6 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
                     draw = ImageDraw.Draw(img)
 
-                    # Căn giữa theo chiều cao THẬT của chữ (không dùng pad_y cứng)
-                    # để không bị lệch lên trên khi glyph cao/thấp khác nhau.
                     bbox = draw.textbbox((0, 0), line, font=font)
                     real_h = bbox[3] - bbox[1]
                     text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
@@ -264,14 +360,13 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     y_cur += line_h
 
             elif "Neon" in subtitle_style:
-                # Không có nền — chữ trắng với viền phát sáng (glow) màu tím/hồng xen kẽ
                 gap = 16
                 box_h  = ascent + descent
                 line_h = box_h + gap
                 total_h = len(lines) * line_h - gap
                 y_cur = int(height * 0.84) - total_h // 2
 
-                neon_colors = [(255, 60, 180), (60, 220, 255)]  # hồng neon / xanh cyan neon
+                neon_colors = [(255, 60, 180), (60, 220, 255)]
 
                 for line_idx, line in enumerate(lines):
                     tw = line_widths[line_idx]
@@ -282,7 +377,6 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     real_h = bbox[3] - bbox[1]
                     text_y = y_cur + (box_h - real_h) // 2 - bbox[1]
 
-                    # Lớp glow: vẽ chữ màu neon mờ dần ra ngoài bằng blur, rồi chồng chữ trắng sắc nét lên trên
                     glow_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
                     glow_draw = ImageDraw.Draw(glow_layer)
                     glow_draw.text((text_x, text_y), line, font=font, fill=(*glow_color, 255))
@@ -296,21 +390,20 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     y_cur += line_h
 
             elif "Gradient" in subtitle_style:
-                # Một khung DUY NHẤT bao trọn tất cả các dòng, nền gradient tím -> hồng
                 pad_x = 28
                 pad_y = 18
                 line_gap = 8
                 box_h_each = ascent + descent
                 total_text_h = len(lines) * box_h_each + (len(lines) - 1) * line_gap
-                box_w = common_tw + pad_x * 2
+                box_w = min(common_tw + pad_x * 2, width - 20)
                 box_h_full = total_text_h + pad_y * 2
                 x_box = (width - box_w) // 2
                 y_box = int(height * 0.84) - box_h_full // 2
 
                 overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
                 grad = Image.new("RGBA", (box_w, box_h_full), (0, 0, 0, 0))
-                top_color = (124, 58, 237)     # tím
-                bottom_color = (236, 72, 153)  # hồng
+                top_color = (124, 58, 237)
+                bottom_color = (236, 72, 153)
                 for gy in range(box_h_full):
                     t = gy / max(1, box_h_full - 1)
                     r = int(top_color[0] + (bottom_color[0] - top_color[0]) * t)
@@ -329,7 +422,7 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
 
                 y_cur = y_box + pad_y
                 for line_idx, line in enumerate(lines):
-                    tw = line_widths[line_idx]
+                    tw = min(line_widths[line_idx], box_w - pad_x * 2)
                     text_x = x_box + (box_w - tw) // 2
                     bbox = draw.textbbox((0, 0), line, font=font)
                     real_h = bbox[3] - bbox[1]
@@ -338,7 +431,6 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                     y_cur += box_h_each + line_gap
 
             elif "Minimal" in subtitle_style:
-                # Không nền, chỉ chữ trắng đậm viền đen — phong cách caption gọn của Shorts/Reels
                 gap = 16
                 box_h  = ascent + descent
                 line_h = box_h + gap
@@ -359,14 +451,14 @@ def burn_subtitles(video_path: str, srt_path: str, output_path: str, subtitle_st
                 # "Standard (Nền đen mờ)"
                 gap = 10
                 box_h  = ascent + descent + 12
-                box_w  = common_tw + 24
+                box_w  = min(common_tw + 24, width - 20)
                 line_h = box_h + gap
                 total_h = len(lines) * line_h - gap
                 y_cur = int(height * 0.84) - total_h // 2
                 x_box = (width - box_w) // 2
 
                 for line_idx, line in enumerate(lines):
-                    tw = line_widths[line_idx]
+                    tw = min(line_widths[line_idx], box_w - 24)
                     text_x = x_box + (box_w - tw) // 2
 
                     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
